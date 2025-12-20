@@ -1,0 +1,134 @@
+name: Tag merged PRs
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - closed
+
+permissions:
+  contents: write
+
+jobs:
+  preview-pr-tag:
+    if: github.event.pull_request.merged != true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Determine next version
+        id: next-version
+        run: python3 scripts/gh/determine_highest_version_prefix.py
+
+      - name: Publish tag preview summary
+        env:
+          NEXT_VERSION: ${{ steps.next-version.outputs.version }}
+        run: |
+          next_tag="v${NEXT_VERSION}"
+          {
+            echo "### Release Tag Preview"
+            echo
+            echo "If merged, this PR will be tagged as \`$next_tag\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  tag-merged-pr:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Determine next version
+        id: next-version
+        run: python3 scripts/gh/determine_highest_version_prefix.py
+
+      - name: Tag merge commit
+        env:
+          NEXT_VERSION: ${{ steps.next-version.outputs.version }}
+        run: |
+          merge_sha="${{ github.event.pull_request.merge_commit_sha }}"
+          if [ -z "$merge_sha" ]; then
+            merge_sha="${{ github.sha }}"
+          fi
+
+          tag_name="v${NEXT_VERSION}"
+          echo "Preparing tag ${tag_name} for merge commit ${merge_sha}"
+
+          if git rev-parse "${tag_name}" >/dev/null 2>&1; then
+            echo "Tag ${tag_name} already exists locally; skipping creation."
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --tags origin "${tag_name}" >/dev/null 2>&1; then
+            echo "Tag ${tag_name} already exists on origin; skipping creation."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag "${tag_name}" "${merge_sha}"
+          git push origin "${tag_name}"
+
+      - name: Generate changelog
+        id: changelog
+        env:
+          NEXT_VERSION: ${{ steps.next-version.outputs.version }}
+        run: |
+          tag_name="v${NEXT_VERSION}"
+
+          # Find the previous tag
+          prev_tag=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -2 | tail -1)
+
+          # Generate changelog
+          if [ -n "$prev_tag" ]; then
+            echo "Generating changelog from ${prev_tag} to ${tag_name}"
+            changelog=$(git log ${prev_tag}..${tag_name} --pretty=format:"- %s (%h)" --no-merges)
+          else
+            echo "No previous tag found, using all commits"
+            changelog=$(git log ${tag_name} --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          # Write changelog to file and output
+          echo "$changelog" > /tmp/changelog.txt
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$changelog" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT_VERSION: ${{ steps.next-version.outputs.version }}
+          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
+        run: |
+          tag_name="v${NEXT_VERSION}"
+
+          # Create release notes
+          cat << EOF > /tmp/release-notes.md
+          ## What's Changed
+
+          $CHANGELOG
+
+          **Full Changelog**: https://github.com/${{ github.repository }}/commits/${tag_name}
+          EOF
+
+          # Create the release
+          gh release create "${tag_name}" \
+            --title "${tag_name}" \
+            --notes-file /tmp/release-notes.md \
+            --repo ${{ github.repository }}
