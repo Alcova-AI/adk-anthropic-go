@@ -171,19 +171,13 @@ func schemaPropertiesToMap(props map[string]*genai.Schema) map[string]any {
 		if schema == nil {
 			continue
 		}
-		result[name] = schemaToMap(schema)
+		result[name] = SchemaToMap(schema)
 	}
 	return result
 }
 
 // SchemaToMap converts a genai.Schema to a map[string]any suitable for Anthropic.
-// This is the exported version used for structured outputs.
 func SchemaToMap(schema *genai.Schema) map[string]any {
-	return schemaToMap(schema)
-}
-
-// schemaToMap converts a genai.Schema to a map[string]any suitable for Anthropic.
-func schemaToMap(schema *genai.Schema) map[string]any {
 	if schema == nil {
 		return nil
 	}
@@ -212,7 +206,7 @@ func schemaToMap(schema *genai.Schema) map[string]any {
 
 	// Items (for arrays)
 	if schema.Items != nil {
-		result["items"] = schemaToMap(schema.Items)
+		result["items"] = SchemaToMap(schema.Items)
 	}
 
 	// Properties (for objects)
@@ -264,7 +258,7 @@ func schemaToMap(schema *genai.Schema) map[string]any {
 	if len(schema.AnyOf) > 0 {
 		anyOf := make([]map[string]any, 0, len(schema.AnyOf))
 		for _, s := range schema.AnyOf {
-			if m := schemaToMap(s); m != nil {
+			if m := SchemaToMap(s); m != nil {
 				anyOf = append(anyOf, m)
 			}
 		}
