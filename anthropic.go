@@ -150,6 +150,11 @@ func (m *anthropicModel) GenerateContent(ctx context.Context, req *model.LLMRequ
 
 // generate calls the model synchronously.
 func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
+	// Use Beta API if structured outputs are requested
+	if req.Config != nil && req.Config.ResponseSchema != nil {
+		return m.generateWithStructuredOutput(ctx, req)
+	}
+
 	params, err := m.convertRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert request: %w", err)
@@ -161,6 +166,26 @@ func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*
 	}
 
 	resp, err := converters.MessageToLLMResponse(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert response: %w", err)
+	}
+
+	return resp, nil
+}
+
+// generateWithStructuredOutput uses the Beta API for structured outputs.
+func (m *anthropicModel) generateWithStructuredOutput(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
+	params, err := m.convertBetaRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert beta request: %w", err)
+	}
+
+	msg, err := m.client.Beta.Messages.New(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call model with structured output: %w", err)
+	}
+
+	resp, err := converters.BetaMessageToLLMResponse(msg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert response: %w", err)
 	}
@@ -263,6 +288,58 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 		// Tools
 		if len(req.Config.Tools) > 0 {
 			params.Tools = converters.ToolsToAnthropicTools(req.Config.Tools)
+		}
+	}
+
+	return params, nil
+}
+
+// convertBetaRequest converts an LLMRequest to Anthropic BetaMessageNewParams for structured outputs.
+func (m *anthropicModel) convertBetaRequest(req *model.LLMRequest) (anthropic.BetaMessageNewParams, error) {
+	messages, err := converters.ContentsToBetaMessages(req.Contents)
+	if err != nil {
+		return anthropic.BetaMessageNewParams{}, fmt.Errorf("failed to convert contents: %w", err)
+	}
+
+	params := anthropic.BetaMessageNewParams{
+		Model:     anthropic.Model(m.name),
+		Messages:  messages,
+		MaxTokens: int64(m.defaultMaxTokens),
+		Betas:     []anthropic.AnthropicBeta{"structured-outputs-2025-11-13"},
+	}
+
+	if req.Config != nil {
+		// System instruction
+		if req.Config.SystemInstruction != nil {
+			params.System = converters.SystemInstructionToBetaSystem(req.Config.SystemInstruction)
+		}
+
+		// Generation parameters
+		if req.Config.Temperature != nil {
+			params.Temperature = anthropic.Float(float64(*req.Config.Temperature))
+		}
+		if req.Config.TopP != nil {
+			params.TopP = anthropic.Float(float64(*req.Config.TopP))
+		}
+		if req.Config.TopK != nil {
+			params.TopK = anthropic.Int(int64(*req.Config.TopK))
+		}
+		if len(req.Config.StopSequences) > 0 {
+			params.StopSequences = req.Config.StopSequences
+		}
+		if req.Config.MaxOutputTokens > 0 {
+			params.MaxTokens = int64(req.Config.MaxOutputTokens)
+		}
+
+		// Structured output schema
+		if req.Config.ResponseSchema != nil {
+			schemaMap := converters.SchemaToMap(req.Config.ResponseSchema)
+			params.OutputFormat = anthropic.BetaJSONSchemaOutputFormat(schemaMap)
+		}
+
+		// Tools
+		if len(req.Config.Tools) > 0 {
+			params.Tools = converters.ToolsToBetaAnthropicTools(req.Config.Tools)
 		}
 	}
 

@@ -171,13 +171,13 @@ func schemaPropertiesToMap(props map[string]*genai.Schema) map[string]any {
 		if schema == nil {
 			continue
 		}
-		result[name] = schemaToMap(schema)
+		result[name] = SchemaToMap(schema)
 	}
 	return result
 }
 
-// schemaToMap converts a genai.Schema to a map[string]any suitable for Anthropic.
-func schemaToMap(schema *genai.Schema) map[string]any {
+// SchemaToMap converts a genai.Schema to a map[string]any suitable for Anthropic.
+func SchemaToMap(schema *genai.Schema) map[string]any {
 	if schema == nil {
 		return nil
 	}
@@ -206,7 +206,7 @@ func schemaToMap(schema *genai.Schema) map[string]any {
 
 	// Items (for arrays)
 	if schema.Items != nil {
-		result["items"] = schemaToMap(schema.Items)
+		result["items"] = SchemaToMap(schema.Items)
 	}
 
 	// Properties (for objects)
@@ -258,7 +258,7 @@ func schemaToMap(schema *genai.Schema) map[string]any {
 	if len(schema.AnyOf) > 0 {
 		anyOf := make([]map[string]any, 0, len(schema.AnyOf))
 		for _, s := range schema.AnyOf {
-			if m := schemaToMap(s); m != nil {
+			if m := SchemaToMap(s); m != nil {
 				anyOf = append(anyOf, m)
 			}
 		}
@@ -268,4 +268,68 @@ func schemaToMap(schema *genai.Schema) map[string]any {
 	}
 
 	return result
+}
+
+// ToolsToBetaAnthropicTools converts genai Tools to Anthropic BetaToolUnionParams.
+// Used for the Beta API (structured outputs).
+func ToolsToBetaAnthropicTools(tools []*genai.Tool) []anthropic.BetaToolUnionParam {
+	if len(tools) == 0 {
+		return nil
+	}
+
+	var result []anthropic.BetaToolUnionParam
+	for _, tool := range tools {
+		if tool == nil || len(tool.FunctionDeclarations) == 0 {
+			continue
+		}
+		for _, fd := range tool.FunctionDeclarations {
+			if fd == nil {
+				continue
+			}
+			toolParam := FunctionDeclarationToBetaTool(fd)
+			result = append(result, toolParam)
+		}
+	}
+	return result
+}
+
+// FunctionDeclarationToBetaTool converts a genai FunctionDeclaration to a BetaToolUnionParam.
+func FunctionDeclarationToBetaTool(fd *genai.FunctionDeclaration) anthropic.BetaToolUnionParam {
+	inputSchema := anthropic.BetaToolInputSchemaParam{
+		Properties: map[string]any{},
+	}
+
+	// Convert parameters schema
+	if fd.Parameters != nil {
+		props := schemaPropertiesToMap(fd.Parameters.Properties)
+		if props != nil {
+			inputSchema.Properties = props
+		}
+		if len(fd.Parameters.Required) > 0 {
+			inputSchema.Required = fd.Parameters.Required
+		}
+	} else if fd.ParametersJsonSchema != nil {
+		switch schema := fd.ParametersJsonSchema.(type) {
+		case map[string]any:
+			if props, ok := schema["properties"].(map[string]any); ok {
+				inputSchema.Properties = props
+			}
+			inputSchema.Required = extractRequiredFields(schema["required"])
+		case *jsonschema.Schema:
+			if props := jsonSchemaToProperties(schema); props != nil {
+				inputSchema.Properties = props
+			}
+			if len(schema.Required) > 0 {
+				inputSchema.Required = schema.Required
+			}
+		}
+	}
+
+	return anthropic.BetaToolUnionParam{
+		OfTool: &anthropic.BetaToolParam{
+			Name:        fd.Name,
+			Description: anthropic.String(fd.Description),
+			InputSchema: inputSchema,
+		},
+	}
 }
