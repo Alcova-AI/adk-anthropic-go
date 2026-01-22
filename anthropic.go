@@ -18,7 +18,10 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"log/slog"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -252,7 +255,35 @@ Respond ONLY with the JSON object, no markdown code fences, no explanations.`, s
 		return nil, fmt.Errorf("failed to convert response: %w", err)
 	}
 
+	// Strip markdown code fences from the response text since models sometimes
+	// wrap JSON in ```json ... ``` despite being told not to
+	stripMarkdownFromResponse(ctx, resp)
+
 	return resp, nil
+}
+
+// markdownFenceRegex matches ```json ... ``` or ``` ... ``` code blocks
+var markdownFenceRegex = regexp.MustCompile("(?s)^\\s*```(?:json)?\\s*\n?(.*?)\\s*```\\s*$")
+
+// stripMarkdownFromResponse removes markdown code fences from text parts in the response.
+// This handles cases where the model wraps JSON in ```json ... ``` despite instructions.
+func stripMarkdownFromResponse(ctx context.Context, resp *model.LLMResponse) {
+	if resp == nil || resp.Content == nil || len(resp.Content.Parts) == 0 {
+		return
+	}
+
+	for _, part := range resp.Content.Parts {
+		if part == nil || part.Text == "" {
+			continue
+		}
+		if matches := markdownFenceRegex.FindStringSubmatch(part.Text); len(matches) > 1 {
+			original := part.Text
+			part.Text = strings.TrimSpace(matches[1])
+			slog.DebugContext(ctx, "stripped markdown fences from JSON response",
+				"original_length", len(original),
+				"stripped_length", len(part.Text))
+		}
+	}
 }
 
 // generateStream returns a stream of responses from the model.

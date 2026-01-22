@@ -15,6 +15,7 @@
 package adkanthropic
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -195,4 +196,67 @@ func TestBuildPromptBasedJSONRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStripMarkdownFromResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "plain_json",
+			input:    `{"key": "value"}`,
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "json_with_json_fence",
+			input:    "```json\n{\"key\": \"value\"}\n```",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "json_with_plain_fence",
+			input:    "```\n{\"key\": \"value\"}\n```",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "json_with_fence_and_whitespace",
+			input:    "  ```json\n{\"key\": \"value\"}\n```  ",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "multiline_json_with_fence",
+			input:    "```json\n{\n  \"name\": \"test\",\n  \"value\": 123\n}\n```",
+			expected: "{\n  \"name\": \"test\",\n  \"value\": 123\n}",
+		},
+		{
+			name:     "no_closing_fence_unchanged",
+			input:    "```json\n{\"key\": \"value\"}",
+			expected: "```json\n{\"key\": \"value\"}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &model.LLMResponse{
+				Content: &genai.Content{
+					Parts: []*genai.Part{{Text: tt.input}},
+				},
+			}
+
+			stripMarkdownFromResponse(context.Background(), resp)
+
+			if resp.Content.Parts[0].Text != tt.expected {
+				t.Errorf("stripMarkdownFromResponse() = %q, want %q", resp.Content.Parts[0].Text, tt.expected)
+			}
+		})
+	}
+}
+
+func TestStripMarkdownFromResponse_NilHandling(t *testing.T) {
+	// Should not panic on nil inputs
+	stripMarkdownFromResponse(context.Background(), nil)
+	stripMarkdownFromResponse(context.Background(), &model.LLMResponse{})
+	stripMarkdownFromResponse(context.Background(), &model.LLMResponse{Content: &genai.Content{}})
+	stripMarkdownFromResponse(context.Background(), &model.LLMResponse{Content: &genai.Content{Parts: []*genai.Part{nil}}})
 }
