@@ -17,6 +17,11 @@ package adkanthropic
 import (
 	"strings"
 	"testing"
+
+	"google.golang.org/genai"
+
+	"github.com/Alcova-AI/adk-anthropic-go/converters"
+	"google.golang.org/adk/model"
 )
 
 func TestNewModel_ConfigBehavior(t *testing.T) {
@@ -89,6 +94,104 @@ func TestNewModel_VertexAI_MissingConfig(t *testing.T) {
 			_, err := NewModel(t.Context(), "claude-sonnet-4-20250514", cfg)
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
 				t.Fatalf("NewModel() error = %v, want contains %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestBuildPromptBasedJSONRequest(t *testing.T) {
+	schema := &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"name": {Type: genai.TypeString, Description: "The name"},
+			"age":  {Type: genai.TypeInteger, Description: "The age"},
+		},
+		Required: []string{"name", "age"},
+	}
+
+	tests := []struct {
+		name                  string
+		existingSystemPrompt  string
+		wantContainsSchema    bool
+		wantContainsExisting  bool
+	}{
+		{
+			name:                 "no_existing_system_prompt",
+			existingSystemPrompt: "",
+			wantContainsSchema:   true,
+			wantContainsExisting: false,
+		},
+		{
+			name:                 "with_existing_system_prompt",
+			existingSystemPrompt: "You are a helpful assistant.",
+			wantContainsSchema:   true,
+			wantContainsExisting: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &model.LLMRequest{
+				Contents: []*genai.Content{
+					{Role: "user", Parts: []*genai.Part{{Text: "Hello"}}},
+				},
+				Config: &genai.GenerateContentConfig{
+					ResponseSchema: schema,
+				},
+			}
+
+			if tt.existingSystemPrompt != "" {
+				req.Config.SystemInstruction = &genai.Content{
+					Parts: []*genai.Part{{Text: tt.existingSystemPrompt}},
+				}
+			}
+
+			// Build the modified config the same way generateWithPromptBasedJSON does
+			schemaJSON := converters.SchemaToJSONString(req.Config.ResponseSchema)
+			jsonInstruction := "You must respond with valid JSON that conforms to the following JSON schema:\n\n" + schemaJSON + "\n\nRespond ONLY with the JSON object, no markdown code fences, no explanations."
+
+			modifiedConfig := *req.Config
+			if modifiedConfig.SystemInstruction == nil {
+				modifiedConfig.SystemInstruction = &genai.Content{
+					Parts: []*genai.Part{{Text: jsonInstruction}},
+				}
+			} else {
+				existingText := ""
+				for _, part := range modifiedConfig.SystemInstruction.Parts {
+					if part.Text != "" {
+						existingText += part.Text + "\n\n"
+					}
+				}
+				modifiedConfig.SystemInstruction = &genai.Content{
+					Parts: []*genai.Part{{Text: existingText + jsonInstruction}},
+				}
+			}
+			modifiedConfig.ResponseSchema = nil
+
+			// Verify the modified config
+			if modifiedConfig.ResponseSchema != nil {
+				t.Error("ResponseSchema should be nil after modification")
+			}
+
+			if modifiedConfig.SystemInstruction == nil {
+				t.Fatal("SystemInstruction should not be nil")
+			}
+
+			systemText := ""
+			for _, part := range modifiedConfig.SystemInstruction.Parts {
+				systemText += part.Text
+			}
+
+			if tt.wantContainsSchema && !strings.Contains(systemText, `"type": "object"`) {
+				t.Error("SystemInstruction should contain the JSON schema")
+			}
+
+			if tt.wantContainsSchema && !strings.Contains(systemText, "Respond ONLY with the JSON object") {
+				t.Error("SystemInstruction should contain JSON instruction")
+			}
+
+			if tt.wantContainsExisting && !strings.Contains(systemText, tt.existingSystemPrompt) {
+				t.Errorf("SystemInstruction should contain existing prompt %q", tt.existingSystemPrompt)
 			}
 		})
 	}

@@ -174,7 +174,13 @@ func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*
 }
 
 // generateWithStructuredOutput uses the Beta API for structured outputs.
+// For Vertex AI (which doesn't support the anthropic-beta header), it falls back
+// to prompt-based JSON output with the schema embedded in the system instruction.
 func (m *anthropicModel) generateWithStructuredOutput(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
+	if m.variant == VariantVertexAI {
+		return m.generateWithPromptBasedJSON(ctx, req)
+	}
+
 	params, err := m.convertBetaRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert beta request: %w", err)
@@ -186,6 +192,62 @@ func (m *anthropicModel) generateWithStructuredOutput(ctx context.Context, req *
 	}
 
 	resp, err := converters.BetaMessageToLLMResponse(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert response: %w", err)
+	}
+
+	return resp, nil
+}
+
+// generateWithPromptBasedJSON falls back to prompt-based JSON for Vertex AI.
+// It embeds the JSON schema in the system instruction and asks the model to respond with valid JSON.
+func (m *anthropicModel) generateWithPromptBasedJSON(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
+	schemaJSON := converters.SchemaToJSONString(req.Config.ResponseSchema)
+
+	jsonInstruction := fmt.Sprintf(`You must respond with valid JSON that conforms to the following JSON schema:
+
+%s
+
+Respond ONLY with the JSON object, no markdown code fences, no explanations.`, schemaJSON)
+
+	// Clone the config to avoid mutating the original request
+	modifiedConfig := *req.Config
+	if modifiedConfig.SystemInstruction == nil {
+		modifiedConfig.SystemInstruction = &genai.Content{
+			Parts: []*genai.Part{{Text: jsonInstruction}},
+		}
+	} else {
+		existingText := ""
+		for _, part := range modifiedConfig.SystemInstruction.Parts {
+			if part.Text != "" {
+				existingText += part.Text + "\n\n"
+			}
+		}
+		modifiedConfig.SystemInstruction = &genai.Content{
+			Parts: []*genai.Part{{Text: existingText + jsonInstruction}},
+			Role:  modifiedConfig.SystemInstruction.Role,
+		}
+	}
+	modifiedConfig.ResponseSchema = nil
+
+	modifiedReq := &model.LLMRequest{
+		Model:    req.Model,
+		Contents: req.Contents,
+		Config:   &modifiedConfig,
+		Tools:    req.Tools,
+	}
+
+	params, err := m.convertRequest(modifiedReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert request: %w", err)
+	}
+
+	msg, err := m.client.Messages.New(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call model: %w", err)
+	}
+
+	resp, err := converters.MessageToLLMResponse(msg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert response: %w", err)
 	}
