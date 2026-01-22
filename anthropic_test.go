@@ -204,6 +204,7 @@ func TestStripMarkdownFromResponse(t *testing.T) {
 		input    string
 		expected string
 	}{
+		// Strict match cases (entire text is fenced)
 		{
 			name:     "plain_json",
 			input:    `{"key": "value"}`,
@@ -233,6 +234,27 @@ func TestStripMarkdownFromResponse(t *testing.T) {
 			name:     "no_closing_fence_unchanged",
 			input:    "```json\n{\"key\": \"value\"}",
 			expected: "```json\n{\"key\": \"value\"}",
+		},
+		// Permissive match cases (preamble before fenced JSON)
+		{
+			name:     "preamble_with_fenced_json",
+			input:    "Here is the JSON:\n```json\n{\"key\": \"value\"}\n```",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "preamble_with_fenced_array",
+			input:    "The results are:\n```json\n[{\"id\": 1}, {\"id\": 2}]\n```",
+			expected: `[{"id": 1}, {"id": 2}]`,
+		},
+		{
+			name:     "explanation_with_fenced_json",
+			input:    "Based on my analysis:\n\n```json\n{\"result\": true}\n```\n\nHope this helps!",
+			expected: `{"result": true}`,
+		},
+		{
+			name:     "nested_json_in_fence",
+			input:    "```json\n{\"outer\": {\"inner\": \"value\"}}\n```",
+			expected: `{"outer": {"inner": "value"}}`,
 		},
 	}
 

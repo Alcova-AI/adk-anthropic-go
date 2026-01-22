@@ -262,11 +262,20 @@ Respond ONLY with the JSON object, no markdown code fences, no explanations.`, s
 	return resp, nil
 }
 
-// markdownFenceRegex matches ```json ... ``` or ``` ... ``` code blocks
+// markdownFenceRegex matches ```json ... ``` or ``` ... ``` code blocks.
+// Uses non-greedy matching to handle the first complete fence block.
+// The (?s) flag enables dotall mode so . matches newlines.
 var markdownFenceRegex = regexp.MustCompile("(?s)^\\s*```(?:json)?\\s*\n?(.*?)\\s*```\\s*$")
+
+// markdownFenceExtractRegex is a more permissive regex that extracts JSON from
+// anywhere in the response, handling cases where the model adds preamble text.
+var markdownFenceExtractRegex = regexp.MustCompile("(?s)```(?:json)?\\s*\n?(\\{.*?\\}|\\[.*?\\])\\s*```")
 
 // stripMarkdownFromResponse removes markdown code fences from text parts in the response.
 // This handles cases where the model wraps JSON in ```json ... ``` despite instructions.
+// It tries two approaches:
+// 1. First, check if the entire text is wrapped in fences (strict match)
+// 2. If not, try to extract a JSON object/array from within fences (permissive match)
 func stripMarkdownFromResponse(ctx context.Context, resp *model.LLMResponse) {
 	if resp == nil || resp.Content == nil || len(resp.Content.Parts) == 0 {
 		return
@@ -276,10 +285,22 @@ func stripMarkdownFromResponse(ctx context.Context, resp *model.LLMResponse) {
 		if part == nil || part.Text == "" {
 			continue
 		}
+
+		original := part.Text
+
+		// First try strict match: entire text is wrapped in fences
 		if matches := markdownFenceRegex.FindStringSubmatch(part.Text); len(matches) > 1 {
-			original := part.Text
 			part.Text = strings.TrimSpace(matches[1])
-			slog.DebugContext(ctx, "stripped markdown fences from JSON response",
+			slog.DebugContext(ctx, "stripped markdown fences from JSON response (strict)",
+				"original_length", len(original),
+				"stripped_length", len(part.Text))
+			continue
+		}
+
+		// Fall back to permissive match: extract JSON from within fences
+		if matches := markdownFenceExtractRegex.FindStringSubmatch(part.Text); len(matches) > 1 {
+			part.Text = strings.TrimSpace(matches[1])
+			slog.DebugContext(ctx, "extracted JSON from markdown fences (permissive)",
 				"original_length", len(original),
 				"stripped_length", len(part.Text))
 		}
