@@ -16,6 +16,7 @@ package converters
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -303,6 +304,108 @@ func ToolsToBetaAnthropicTools(tools []*genai.Tool) []anthropic.BetaToolUnionPar
 		}
 	}
 	return result
+}
+
+// ToolConfigToToolChoice converts a genai.ToolConfig to Anthropic's tool_choice parameter.
+// Returns a zero-value union param if no tool_choice should be set (defaults to auto behavior).
+//
+// Mapping:
+//   - ModeNone -> tool_choice omitted (model won't use tools)
+//   - ModeAuto -> "auto" (model decides whether to use tools)
+//   - ModeAny -> "any" (model must use a tool)
+//   - ModeAny + single AllowedFunctionNames -> "tool" with specific name
+//
+// Returns an error if AllowedFunctionNames contains more than one function name,
+// as Anthropic doesn't support restricting to multiple specific functions.
+func ToolConfigToToolChoice(config *genai.ToolConfig) (anthropic.ToolChoiceUnionParam, error) {
+	if config == nil || config.FunctionCallingConfig == nil {
+		return anthropic.ToolChoiceUnionParam{}, nil // Return zero value, will be omitted
+	}
+
+	fcc := config.FunctionCallingConfig
+
+	// Check for unsupported multiple allowed function names
+	if len(fcc.AllowedFunctionNames) > 1 {
+		return anthropic.ToolChoiceUnionParam{}, fmt.Errorf(
+			"Anthropic does not support multiple AllowedFunctionNames (got %d); use a single function name or remove the restriction",
+			len(fcc.AllowedFunctionNames),
+		)
+	}
+
+	switch fcc.Mode {
+	case genai.FunctionCallingConfigModeNone:
+		return anthropic.ToolChoiceUnionParam{}, nil
+
+	case genai.FunctionCallingConfigModeAuto:
+		return anthropic.ToolChoiceUnionParam{
+			OfAuto: &anthropic.ToolChoiceAutoParam{},
+		}, nil
+
+	case genai.FunctionCallingConfigModeAny:
+		// If a single allowed function is specified, force that specific tool
+		if len(fcc.AllowedFunctionNames) == 1 {
+			return anthropic.ToolChoiceUnionParam{
+				OfTool: &anthropic.ToolChoiceToolParam{
+					Name: fcc.AllowedFunctionNames[0],
+				},
+			}, nil
+		}
+		return anthropic.ToolChoiceUnionParam{
+			OfAny: &anthropic.ToolChoiceAnyParam{},
+		}, nil
+
+	default:
+		// Unknown mode, default to auto
+		return anthropic.ToolChoiceUnionParam{
+			OfAuto: &anthropic.ToolChoiceAutoParam{},
+		}, nil
+	}
+}
+
+// ToolConfigToBetaToolChoice converts a genai.ToolConfig to Anthropic's Beta API tool_choice parameter.
+// Returns an error if AllowedFunctionNames contains more than one function name.
+func ToolConfigToBetaToolChoice(config *genai.ToolConfig) (anthropic.BetaToolChoiceUnionParam, error) {
+	if config == nil || config.FunctionCallingConfig == nil {
+		return anthropic.BetaToolChoiceUnionParam{}, nil // Return zero value, will be omitted
+	}
+
+	fcc := config.FunctionCallingConfig
+
+	// Check for unsupported multiple allowed function names
+	if len(fcc.AllowedFunctionNames) > 1 {
+		return anthropic.BetaToolChoiceUnionParam{}, fmt.Errorf(
+			"Anthropic does not support multiple AllowedFunctionNames (got %d); use a single function name or remove the restriction",
+			len(fcc.AllowedFunctionNames),
+		)
+	}
+
+	switch fcc.Mode {
+	case genai.FunctionCallingConfigModeNone:
+		return anthropic.BetaToolChoiceUnionParam{}, nil
+
+	case genai.FunctionCallingConfigModeAuto:
+		return anthropic.BetaToolChoiceUnionParam{
+			OfAuto: &anthropic.BetaToolChoiceAutoParam{},
+		}, nil
+
+	case genai.FunctionCallingConfigModeAny:
+		// If a single allowed function is specified, force that specific tool
+		if len(fcc.AllowedFunctionNames) == 1 {
+			return anthropic.BetaToolChoiceUnionParam{
+				OfTool: &anthropic.BetaToolChoiceToolParam{
+					Name: fcc.AllowedFunctionNames[0],
+				},
+			}, nil
+		}
+		return anthropic.BetaToolChoiceUnionParam{
+			OfAny: &anthropic.BetaToolChoiceAnyParam{},
+		}, nil
+
+	default:
+		return anthropic.BetaToolChoiceUnionParam{
+			OfAuto: &anthropic.BetaToolChoiceAutoParam{},
+		}, nil
+	}
 }
 
 // FunctionDeclarationToBetaTool converts a genai FunctionDeclaration to a BetaToolUnionParam.
