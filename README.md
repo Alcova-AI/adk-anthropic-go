@@ -79,7 +79,7 @@ func main() {
 model, err := adkanthropic.NewModel(ctx, "claude-sonnet-4@20250514", &adkanthropic.Config{
 	Variant:         adkanthropic.VariantVertexAI,
 	VertexProjectID: os.Getenv("GOOGLE_CLOUD_PROJECT"),
-	VertexRegion:    os.Getenv("GOOGLE_CLOUD_REGION"),
+	VertexLocation:  os.Getenv("GOOGLE_CLOUD_LOCATION"),
 })
 ```
 
@@ -92,7 +92,7 @@ Or set `ANTHROPIC_USE_VERTEX=1` to use Vertex AI without specifying the variant 
 | `ANTHROPIC_API_KEY` | API key for direct Anthropic API access |
 | `ANTHROPIC_USE_VERTEX` | Set to `1` or `true` to use Vertex AI backend |
 | `GOOGLE_CLOUD_PROJECT` | GCP project ID for Vertex AI |
-| `GOOGLE_CLOUD_REGION` | GCP region for Vertex AI (e.g., `us-central1`) |
+| `GOOGLE_CLOUD_LOCATION` | GCP location for Vertex AI (e.g., `us-central1`) |
 
 ### Configuration Options
 
@@ -103,7 +103,7 @@ type Config struct {
 
 	// Vertex AI configuration
 	VertexProjectID string
-	VertexRegion    string
+	VertexLocation  string
 
 	// Backend variant: VariantAnthropicAPI or VariantVertexAI
 	Variant string

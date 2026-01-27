@@ -50,8 +50,8 @@
 //
 //	model, err := adkanthropic.NewModel(ctx, "claude-sonnet-4@20250514", &adkanthropic.Config{
 //		Variant:         adkanthropic.VariantVertexAI,
-//		VertexProjectID: os.Getenv("GOOGLE_CLOUD_PROJECT"),
-//		VertexRegion:    os.Getenv("GOOGLE_CLOUD_REGION"),
+//		VertexProjectID:  os.Getenv("GOOGLE_CLOUD_PROJECT"),
+//		VertexLocation:   os.Getenv("GOOGLE_CLOUD_LOCATION"),
 //	})
 //
 // Alternatively, set the ANTHROPIC_USE_VERTEX environment variable to "1" or "true"

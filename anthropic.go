@@ -49,8 +49,8 @@ type anthropicModel struct {
 // For direct Anthropic API, set APIKey in the config or the ANTHROPIC_API_KEY
 // environment variable.
 //
-// For Vertex AI, set VertexProjectID and VertexRegion in the config or use
-// GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_REGION environment variables.
+// For Vertex AI, set VertexProjectID and VertexLocation in the config or use
+// GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION environment variables.
 func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (model.LLM, error) {
 	if cfg == nil {
 		cfg = &Config{}
@@ -73,12 +73,12 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 			return nil, fmt.Errorf("VertexProjectID is required for Vertex AI (set GOOGLE_CLOUD_PROJECT)")
 		}
 
-		region := cfg.VertexRegion
-		if region == "" {
-			region = os.Getenv("GOOGLE_CLOUD_REGION")
+		location := cfg.VertexLocation
+		if location == "" {
+			location = os.Getenv("GOOGLE_CLOUD_LOCATION")
 		}
-		if region == "" {
-			return nil, fmt.Errorf("VertexRegion is required for Vertex AI (set GOOGLE_CLOUD_REGION)")
+		if location == "" {
+			return nil, fmt.Errorf("VertexLocation is required for Vertex AI (set GOOGLE_CLOUD_LOCATION)")
 		}
 
 		client = newVertexClient(ctx, cfg)
@@ -122,13 +122,13 @@ func newVertexClient(ctx context.Context, cfg *Config) anthropic.Client {
 		projectID = os.Getenv("GOOGLE_CLOUD_PROJECT")
 	}
 
-	region := cfg.VertexRegion
-	if region == "" {
-		region = os.Getenv("GOOGLE_CLOUD_REGION")
+	location := cfg.VertexLocation
+	if location == "" {
+		location = os.Getenv("GOOGLE_CLOUD_LOCATION")
 	}
 
 	return anthropic.NewClient(
-		vertex.WithGoogleAuth(ctx, region, projectID),
+		vertex.WithGoogleAuth(ctx, location, projectID),
 	)
 }
 
