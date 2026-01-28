@@ -79,7 +79,7 @@ func TestNewModel_VertexAI_MissingConfig(t *testing.T) {
 	tests := []struct {
 		name      string
 		project   string
-		region    string
+		location  string
 		wantError string
 	}{
 		{"missing_project", "", "us-central1", "VertexProjectID is required"},
@@ -89,7 +89,7 @@ func TestNewModel_VertexAI_MissingConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("GOOGLE_CLOUD_PROJECT", tt.project)
-			t.Setenv("GOOGLE_CLOUD_LOCATION", tt.region)
+			t.Setenv("GOOGLE_CLOUD_LOCATION", tt.location)
 
 			cfg := &Config{Variant: VariantVertexAI}
 			_, err := NewModel(t.Context(), "claude-sonnet-4-20250514", cfg)
