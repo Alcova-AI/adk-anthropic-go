@@ -687,6 +687,54 @@ func SystemInstructionToBetaSystem(instruction *genai.Content) []anthropic.BetaT
 	return blocks
 }
 
+// ThinkingConfigToAnthropicThinking converts a genai ThinkingConfig to an Anthropic ThinkingConfigParamUnion.
+func ThinkingConfigToAnthropicThinking(cfg *genai.ThinkingConfig) anthropic.ThinkingConfigParamUnion {
+	if cfg == nil {
+		return anthropic.ThinkingConfigParamUnion{}
+	}
+
+	// If a budget is explicitly set, use it directly.
+	if cfg.ThinkingBudget != nil {
+		return anthropic.ThinkingConfigParamOfEnabled(int64(*cfg.ThinkingBudget))
+	}
+
+	// Map thinking level to a default budget.
+	switch cfg.ThinkingLevel {
+	case genai.ThinkingLevelHigh:
+		return anthropic.ThinkingConfigParamOfEnabled(10000)
+	case genai.ThinkingLevelLow:
+		return anthropic.ThinkingConfigParamOfEnabled(1024)
+	default:
+		if cfg.IncludeThoughts {
+			return anthropic.ThinkingConfigParamOfEnabled(10000)
+		}
+		return anthropic.ThinkingConfigParamUnion{}
+	}
+}
+
+// ThinkingConfigToBetaAnthropicThinking converts a genai ThinkingConfig to an Anthropic BetaThinkingConfigParamUnion.
+func ThinkingConfigToBetaAnthropicThinking(cfg *genai.ThinkingConfig) anthropic.BetaThinkingConfigParamUnion {
+	if cfg == nil {
+		return anthropic.BetaThinkingConfigParamUnion{}
+	}
+
+	if cfg.ThinkingBudget != nil {
+		return anthropic.BetaThinkingConfigParamOfEnabled(int64(*cfg.ThinkingBudget))
+	}
+
+	switch cfg.ThinkingLevel {
+	case genai.ThinkingLevelHigh:
+		return anthropic.BetaThinkingConfigParamOfEnabled(10000)
+	case genai.ThinkingLevelLow:
+		return anthropic.BetaThinkingConfigParamOfEnabled(1024)
+	default:
+		if cfg.IncludeThoughts {
+			return anthropic.BetaThinkingConfigParamOfEnabled(10000)
+		}
+		return anthropic.BetaThinkingConfigParamUnion{}
+	}
+}
+
 // mergeConsecutiveBetaMessages merges consecutive Beta messages with the same role.
 func mergeConsecutiveBetaMessages(messages []anthropic.BetaMessageParam) []anthropic.BetaMessageParam {
 	if len(messages) <= 1 {
