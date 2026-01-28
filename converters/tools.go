@@ -16,6 +16,7 @@ package converters
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -45,52 +46,53 @@ func ToolsToAnthropicTools(tools []*genai.Tool) []anthropic.ToolUnionParam {
 	return result
 }
 
-// FunctionDeclarationToTool converts a genai FunctionDeclaration to an Anthropic ToolUnionParam.
-//
-// If Parameters is set, it takes precedence over ParametersJsonSchema.
+// extractFunctionParams extracts properties and required fields from a FunctionDeclaration.
+// Parameters takes precedence over ParametersJsonSchema.
 // ParametersJsonSchema currently supports:
 //   - map[string]any with "properties" and "required" keys
 //   - *jsonschema.Schema
 //
 // Other ParametersJsonSchema types are ignored.
-func FunctionDeclarationToTool(fd *genai.FunctionDeclaration) anthropic.ToolUnionParam {
-	inputSchema := anthropic.ToolInputSchemaParam{
-		// Anthropic tools require an object schema at the root.
-		// The SDK defaults to type "object" when not specified.
-		Properties: map[string]any{},
-	}
+func extractFunctionParams(fd *genai.FunctionDeclaration) (properties map[string]any, required []string) {
+	properties = map[string]any{}
 
-	// Convert parameters schema - Parameters takes precedence over ParametersJsonSchema
 	if fd.Parameters != nil {
-		props := schemaPropertiesToMap(fd.Parameters.Properties)
-		if props != nil {
-			inputSchema.Properties = props
+		if props := schemaPropertiesToMap(fd.Parameters.Properties); props != nil {
+			properties = props
 		}
-		if len(fd.Parameters.Required) > 0 {
-			inputSchema.Required = fd.Parameters.Required
-		}
+		required = fd.Parameters.Required
 	} else if fd.ParametersJsonSchema != nil {
 		switch schema := fd.ParametersJsonSchema.(type) {
 		case map[string]any:
 			if props, ok := schema["properties"].(map[string]any); ok {
-				inputSchema.Properties = props
+				properties = props
 			}
-			inputSchema.Required = extractRequiredFields(schema["required"])
+			required = extractRequiredFields(schema["required"])
 		case *jsonschema.Schema:
 			if props := jsonSchemaToProperties(schema); props != nil {
-				inputSchema.Properties = props
+				properties = props
 			}
 			if len(schema.Required) > 0 {
-				inputSchema.Required = schema.Required
+				required = schema.Required
 			}
 		}
 	}
+
+	return properties, required
+}
+
+// FunctionDeclarationToTool converts a genai FunctionDeclaration to an Anthropic ToolUnionParam.
+func FunctionDeclarationToTool(fd *genai.FunctionDeclaration) anthropic.ToolUnionParam {
+	properties, required := extractFunctionParams(fd)
 
 	return anthropic.ToolUnionParam{
 		OfTool: &anthropic.ToolParam{
 			Name:        fd.Name,
 			Description: anthropic.String(fd.Description),
-			InputSchema: inputSchema,
+			InputSchema: anthropic.ToolInputSchemaParam{
+				Properties: properties,
+				Required:   required,
+			},
 		},
 	}
 }
@@ -305,43 +307,145 @@ func ToolsToBetaAnthropicTools(tools []*genai.Tool) []anthropic.BetaToolUnionPar
 	return result
 }
 
-// FunctionDeclarationToBetaTool converts a genai FunctionDeclaration to a BetaToolUnionParam.
-func FunctionDeclarationToBetaTool(fd *genai.FunctionDeclaration) anthropic.BetaToolUnionParam {
-	inputSchema := anthropic.BetaToolInputSchemaParam{
-		Properties: map[string]any{},
+// toolChoiceKind represents the resolved tool choice type.
+type toolChoiceKind int
+
+const (
+	toolChoiceNone toolChoiceKind = iota // omit tool_choice
+	toolChoiceAuto
+	toolChoiceAny
+	toolChoiceTool
+)
+
+// resolvedToolChoice holds the result of resolving a ToolConfig into a tool choice decision.
+type resolvedToolChoice struct {
+	kind     toolChoiceKind
+	toolName string // populated when kind == toolChoiceTool
+}
+
+// resolveToolChoice extracts the tool choice decision from a ToolConfig.
+// Returns an error for unsupported configurations (multiple AllowedFunctionNames,
+// unknown FunctionCallingConfig modes).
+func resolveToolChoice(config *genai.ToolConfig) (resolvedToolChoice, error) {
+	if config == nil || config.FunctionCallingConfig == nil {
+		return resolvedToolChoice{kind: toolChoiceNone}, nil
 	}
 
-	// Convert parameters schema
-	if fd.Parameters != nil {
-		props := schemaPropertiesToMap(fd.Parameters.Properties)
-		if props != nil {
-			inputSchema.Properties = props
-		}
-		if len(fd.Parameters.Required) > 0 {
-			inputSchema.Required = fd.Parameters.Required
-		}
-	} else if fd.ParametersJsonSchema != nil {
-		switch schema := fd.ParametersJsonSchema.(type) {
-		case map[string]any:
-			if props, ok := schema["properties"].(map[string]any); ok {
-				inputSchema.Properties = props
-			}
-			inputSchema.Required = extractRequiredFields(schema["required"])
-		case *jsonschema.Schema:
-			if props := jsonSchemaToProperties(schema); props != nil {
-				inputSchema.Properties = props
-			}
-			if len(schema.Required) > 0 {
-				inputSchema.Required = schema.Required
-			}
-		}
+	fcc := config.FunctionCallingConfig
+
+	if len(fcc.AllowedFunctionNames) > 1 {
+		return resolvedToolChoice{}, fmt.Errorf(
+			"Anthropic does not support multiple AllowedFunctionNames (got %d); use a single function name or remove the restriction",
+			len(fcc.AllowedFunctionNames),
+		)
 	}
+
+	switch fcc.Mode {
+	case genai.FunctionCallingConfigModeNone:
+		return resolvedToolChoice{kind: toolChoiceNone}, nil
+
+	case genai.FunctionCallingConfigModeAuto:
+		return resolvedToolChoice{kind: toolChoiceAuto}, nil
+
+	case genai.FunctionCallingConfigModeAny:
+		if len(fcc.AllowedFunctionNames) == 1 {
+			return resolvedToolChoice{kind: toolChoiceTool, toolName: fcc.AllowedFunctionNames[0]}, nil
+		}
+		return resolvedToolChoice{kind: toolChoiceAny}, nil
+
+	default:
+		return resolvedToolChoice{}, fmt.Errorf(
+			"unsupported FunctionCallingConfig mode %q; supported modes are: ModeNone, ModeAuto, ModeAny",
+			fcc.Mode,
+		)
+	}
+}
+
+// ToolConfigToToolChoice converts a genai.ToolConfig to Anthropic's tool_choice parameter.
+// Returns a zero-value union param when no tool_choice should be set (nil config, ModeNone),
+// which is safe to assign unconditionally as the SDK omits it during serialization.
+//
+// Mapping:
+//   - ModeNone -> zero value (omitted)
+//   - ModeAuto -> "auto" (model decides whether to use tools)
+//   - ModeAny -> "any" (model must use a tool)
+//   - ModeAny + single AllowedFunctionNames -> "tool" with specific name
+//
+// Returns an error if AllowedFunctionNames contains more than one function name,
+// or if the FunctionCallingConfig mode is not recognized.
+func ToolConfigToToolChoice(config *genai.ToolConfig) (anthropic.ToolChoiceUnionParam, error) {
+	resolved, err := resolveToolChoice(config)
+	if err != nil {
+		return anthropic.ToolChoiceUnionParam{}, err
+	}
+
+	switch resolved.kind {
+	case toolChoiceNone:
+		return anthropic.ToolChoiceUnionParam{}, nil
+	case toolChoiceAuto:
+		return anthropic.ToolChoiceUnionParam{
+			OfAuto: &anthropic.ToolChoiceAutoParam{},
+		}, nil
+	case toolChoiceAny:
+		return anthropic.ToolChoiceUnionParam{
+			OfAny: &anthropic.ToolChoiceAnyParam{},
+		}, nil
+	case toolChoiceTool:
+		return anthropic.ToolChoiceUnionParam{
+			OfTool: &anthropic.ToolChoiceToolParam{
+				Name: resolved.toolName,
+			},
+		}, nil
+	default:
+		return anthropic.ToolChoiceUnionParam{}, fmt.Errorf("unexpected tool choice kind: %d", resolved.kind)
+	}
+}
+
+// ToolConfigToBetaToolChoice converts a genai.ToolConfig to Anthropic's Beta API tool_choice parameter.
+// Returns a zero-value union param when no tool_choice should be set (nil config, ModeNone),
+// which is safe to assign unconditionally as the SDK omits it during serialization.
+// Returns an error if AllowedFunctionNames contains more than one function name,
+// or if the FunctionCallingConfig mode is not recognized.
+func ToolConfigToBetaToolChoice(config *genai.ToolConfig) (anthropic.BetaToolChoiceUnionParam, error) {
+	resolved, err := resolveToolChoice(config)
+	if err != nil {
+		return anthropic.BetaToolChoiceUnionParam{}, err
+	}
+
+	switch resolved.kind {
+	case toolChoiceNone:
+		return anthropic.BetaToolChoiceUnionParam{}, nil
+	case toolChoiceAuto:
+		return anthropic.BetaToolChoiceUnionParam{
+			OfAuto: &anthropic.BetaToolChoiceAutoParam{},
+		}, nil
+	case toolChoiceAny:
+		return anthropic.BetaToolChoiceUnionParam{
+			OfAny: &anthropic.BetaToolChoiceAnyParam{},
+		}, nil
+	case toolChoiceTool:
+		return anthropic.BetaToolChoiceUnionParam{
+			OfTool: &anthropic.BetaToolChoiceToolParam{
+				Name: resolved.toolName,
+			},
+		}, nil
+	default:
+		return anthropic.BetaToolChoiceUnionParam{}, fmt.Errorf("unexpected tool choice kind: %d", resolved.kind)
+	}
+}
+
+// FunctionDeclarationToBetaTool converts a genai FunctionDeclaration to a BetaToolUnionParam.
+func FunctionDeclarationToBetaTool(fd *genai.FunctionDeclaration) anthropic.BetaToolUnionParam {
+	properties, required := extractFunctionParams(fd)
 
 	return anthropic.BetaToolUnionParam{
 		OfTool: &anthropic.BetaToolParam{
 			Name:        fd.Name,
 			Description: anthropic.String(fd.Description),
-			InputSchema: inputSchema,
+			InputSchema: anthropic.BetaToolInputSchemaParam{
+				Properties: properties,
+				Required:   required,
+			},
 		},
 	}
 }

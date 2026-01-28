@@ -20,6 +20,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/genai"
 
 	"github.com/Alcova-AI/adk-anthropic-go/converters"
@@ -441,6 +442,37 @@ var cmpOpts = []cmp.Option{
 
 var _ = cmpOpts
 
+func TestFunctionDeclarationToTool_JsonSchemaNoRequired(t *testing.T) {
+	fd := &genai.FunctionDeclaration{
+		Name:        "test_func",
+		Description: "A test function",
+		ParametersJsonSchema: &jsonschema.Schema{
+			Properties: map[string]*jsonschema.Schema{
+				"name": {Type: "string"},
+			},
+			// Required intentionally omitted (nil)
+		},
+	}
+
+	result := converters.FunctionDeclarationToTool(fd)
+	if result.OfTool == nil {
+		t.Fatal("expected OfTool to be non-nil")
+	}
+
+	if result.OfTool.InputSchema.Required != nil {
+		t.Errorf("expected Required to be nil when jsonschema.Schema has no required fields, got %v",
+			result.OfTool.InputSchema.Required)
+	}
+
+	props, ok := result.OfTool.InputSchema.Properties.(map[string]any)
+	if !ok {
+		t.Fatalf("expected Properties to be map[string]any, got %T", result.OfTool.InputSchema.Properties)
+	}
+	if _, ok := props["name"]; !ok {
+		t.Error("expected 'name' property to be present")
+	}
+}
+
 func TestFunctionDeclarationToTool_ParametersJsonSchemaMap(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -852,6 +884,205 @@ func TestContentBlockToGenaiPart_WebSearchToolResult(t *testing.T) {
 	}
 	if results[0]["url"] != "https://example.com" {
 		t.Errorf("results[0].url = %q, want 'https://example.com'", results[0]["url"])
+	}
+}
+
+func TestToolConfigToToolChoice(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    *genai.ToolConfig
+		wantAuto  bool
+		wantAny   bool
+		wantTool  string
+		wantZero  bool
+		wantError bool
+	}{
+		{
+			name:     "nil config",
+			config:   nil,
+			wantZero: true,
+		},
+		{
+			name:     "nil FunctionCallingConfig",
+			config:   &genai.ToolConfig{},
+			wantZero: true,
+		},
+		{
+			name: "ModeNone",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeNone,
+				},
+			},
+			wantZero: true,
+		},
+		{
+			name: "ModeAuto",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeAuto,
+				},
+			},
+			wantAuto: true,
+		},
+		{
+			name: "ModeAny",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeAny,
+				},
+			},
+			wantAny: true,
+		},
+		{
+			name: "ModeAny with single AllowedFunctionNames",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode:                 genai.FunctionCallingConfigModeAny,
+					AllowedFunctionNames: []string{"get_weather"},
+				},
+			},
+			wantTool: "get_weather",
+		},
+		{
+			name: "multiple AllowedFunctionNames returns error",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode:                 genai.FunctionCallingConfigModeAny,
+					AllowedFunctionNames: []string{"func1", "func2"},
+				},
+			},
+			wantError: true,
+		},
+		{
+			name: "unknown mode returns error",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigMode("UNKNOWN"),
+				},
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := converters.ToolConfigToToolChoice(tt.config)
+
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.wantZero {
+				if result.OfAuto != nil || result.OfAny != nil || result.OfTool != nil {
+					t.Error("expected zero-value result")
+				}
+				return
+			}
+			if tt.wantAuto && result.OfAuto == nil {
+				t.Error("expected OfAuto to be set")
+			}
+			if tt.wantAny && result.OfAny == nil {
+				t.Error("expected OfAny to be set")
+			}
+			if tt.wantTool != "" {
+				if result.OfTool == nil {
+					t.Fatal("expected OfTool to be set")
+				}
+				if result.OfTool.Name != tt.wantTool {
+					t.Errorf("OfTool.Name = %q, want %q", result.OfTool.Name, tt.wantTool)
+				}
+			}
+		})
+	}
+}
+
+func TestToolConfigToBetaToolChoice(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    *genai.ToolConfig
+		wantAuto  bool
+		wantAny   bool
+		wantTool  string
+		wantZero  bool
+		wantError bool
+	}{
+		{
+			name:     "nil config",
+			config:   nil,
+			wantZero: true,
+		},
+		{
+			name: "ModeAuto",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeAuto,
+				},
+			},
+			wantAuto: true,
+		},
+		{
+			name: "ModeAny with single AllowedFunctionNames",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode:                 genai.FunctionCallingConfigModeAny,
+					AllowedFunctionNames: []string{"search"},
+				},
+			},
+			wantTool: "search",
+		},
+		{
+			name: "unknown mode returns error",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigMode("INVALID"),
+				},
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := converters.ToolConfigToBetaToolChoice(tt.config)
+
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.wantZero {
+				if result.OfAuto != nil || result.OfAny != nil || result.OfTool != nil {
+					t.Error("expected zero-value result")
+				}
+				return
+			}
+			if tt.wantAuto && result.OfAuto == nil {
+				t.Error("expected OfAuto to be set")
+			}
+			if tt.wantAny && result.OfAny == nil {
+				t.Error("expected OfAny to be set")
+			}
+			if tt.wantTool != "" {
+				if result.OfTool == nil {
+					t.Fatal("expected OfTool to be set")
+				}
+				if result.OfTool.Name != tt.wantTool {
+					t.Errorf("OfTool.Name = %q, want %q", result.OfTool.Name, tt.wantTool)
+				}
+			}
+		})
 	}
 }
 

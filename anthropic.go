@@ -403,6 +403,15 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 		if len(req.Config.Tools) > 0 {
 			params.Tools = converters.ToolsToAnthropicTools(req.Config.Tools)
 		}
+
+		// Tool choice from ToolConfig
+		if req.Config.ToolConfig != nil {
+			toolChoice, err := converters.ToolConfigToToolChoice(req.Config.ToolConfig)
+			if err != nil {
+				return anthropic.MessageNewParams{}, err
+			}
+			params.ToolChoice = toolChoice
+		}
 	}
 
 	return params, nil
@@ -454,6 +463,15 @@ func (m *anthropicModel) convertBetaRequest(req *model.LLMRequest) (anthropic.Be
 		// Tools
 		if len(req.Config.Tools) > 0 {
 			params.Tools = converters.ToolsToBetaAnthropicTools(req.Config.Tools)
+		}
+
+		// Tool choice from ToolConfig
+		if req.Config.ToolConfig != nil {
+			toolChoice, err := converters.ToolConfigToBetaToolChoice(req.Config.ToolConfig)
+			if err != nil {
+				return anthropic.BetaMessageNewParams{}, err
+			}
+			params.ToolChoice = toolChoice
 		}
 	}
 
