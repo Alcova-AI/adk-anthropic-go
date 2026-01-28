@@ -26,11 +26,11 @@ type Config struct {
 	// This is only used when Variant is VariantVertexAI.
 	VertexProjectID string
 
-	// VertexRegion is the Google Cloud region for Vertex AI access.
-	// If not provided, it will be read from the GOOGLE_CLOUD_REGION environment variable.
-	// Common regions include "us-central1", "us-east5", and "europe-west1".
+	// VertexLocation is the Google Cloud location for Vertex AI access.
+	// If not provided, it will be read from the GOOGLE_CLOUD_LOCATION environment variable.
+	// Common locations include "us-central1", "us-east5", "europe-west1", and "global".
 	// This is only used when Variant is VariantVertexAI.
-	VertexRegion string
+	VertexLocation string
 
 	// Variant determines which backend to use for API calls.
 	// Valid values are VariantAnthropicAPI and VariantVertexAI.

@@ -1,5 +1,31 @@
 # Changelog
 
+## [v0.1.8] - Rename VertexRegion to VertexLocation and rename env var
+
+### Breaking Changes
+
+- **Renamed `VertexRegion` to `VertexLocation`** in `Config` struct to align with
+  Google Cloud's official terminology. The Vertex AI SDK and documentation consistently
+  use "location" rather than "region".
+- **Renamed environment variable `GOOGLE_CLOUD_REGION` to `GOOGLE_CLOUD_LOCATION`**.
+  Update your environment configuration accordingly.
+
+### Migration
+
+Replace in your code:
+
+```go
+// Before
+&adkanthropic.Config{
+    VertexRegion: os.Getenv("GOOGLE_CLOUD_REGION"),
+}
+
+// After
+&adkanthropic.Config{
+    VertexLocation: os.Getenv("GOOGLE_CLOUD_LOCATION"),
+}
+```
+
 ## [v0.1.7] - ToolConfig support for tool_choice
 
 - Add `ToolConfig` support for the `tool_choice` parameter — maps `genai.FunctionCallingConfig` modes to Anthropic's auto/any/tool choices (#9)
