@@ -20,6 +20,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/genai"
 
 	"github.com/Alcova-AI/adk-anthropic-go/converters"
@@ -440,6 +441,37 @@ var cmpOpts = []cmp.Option{
 }
 
 var _ = cmpOpts
+
+func TestFunctionDeclarationToTool_JsonSchemaNoRequired(t *testing.T) {
+	fd := &genai.FunctionDeclaration{
+		Name:        "test_func",
+		Description: "A test function",
+		ParametersJsonSchema: &jsonschema.Schema{
+			Properties: map[string]*jsonschema.Schema{
+				"name": {Type: "string"},
+			},
+			// Required intentionally omitted (nil)
+		},
+	}
+
+	result := converters.FunctionDeclarationToTool(fd)
+	if result.OfTool == nil {
+		t.Fatal("expected OfTool to be non-nil")
+	}
+
+	if result.OfTool.InputSchema.Required != nil {
+		t.Errorf("expected Required to be nil when jsonschema.Schema has no required fields, got %v",
+			result.OfTool.InputSchema.Required)
+	}
+
+	props, ok := result.OfTool.InputSchema.Properties.(map[string]any)
+	if !ok {
+		t.Fatalf("expected Properties to be map[string]any, got %T", result.OfTool.InputSchema.Properties)
+	}
+	if _, ok := props["name"]; !ok {
+		t.Error("expected 'name' property to be present")
+	}
+}
 
 func TestFunctionDeclarationToTool_ParametersJsonSchemaMap(t *testing.T) {
 	tests := []struct {
