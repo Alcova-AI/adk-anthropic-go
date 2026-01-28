@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.1.9] - Map genai.ThinkingConfig to Anthropic extended thinking
+
+- Map `genai.ThinkingConfig` fields (`ThinkingLevel`, `ThinkingBudget`, `IncludeThoughts`) to Anthropic's `Thinking` parameter in both standard and Beta API requests
+- `ThinkingLevel: HIGH` enables thinking with a 10,000 token budget; `LOW` uses the minimum 1,024 tokens
+- An explicit `ThinkingBudget` always takes precedence over level defaults
+- `IncludeThoughts: true` without a level or budget enables thinking with a 10,000 token default
+
 ## [v0.1.8] - Rename VertexRegion to VertexLocation and rename env var
 
 ### Breaking Changes

@@ -412,6 +412,11 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 			}
 			params.ToolChoice = toolChoice
 		}
+
+		// Thinking config
+		if req.Config.ThinkingConfig != nil {
+			params.Thinking = converters.ThinkingConfigToAnthropicThinking(req.Config.ThinkingConfig)
+		}
 	}
 
 	return params, nil
@@ -472,6 +477,11 @@ func (m *anthropicModel) convertBetaRequest(req *model.LLMRequest) (anthropic.Be
 				return anthropic.BetaMessageNewParams{}, err
 			}
 			params.ToolChoice = toolChoice
+		}
+
+		// Thinking config
+		if req.Config.ThinkingConfig != nil {
+			params.Thinking = converters.ThinkingConfigToBetaAnthropicThinking(req.Config.ThinkingConfig)
 		}
 	}
 

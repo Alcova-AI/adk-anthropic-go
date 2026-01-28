@@ -15,7 +15,7 @@ go get github.com/Alcova-AI/adk-anthropic-go
 - Streaming and non-streaming responses
 - Tool/function calling with `ToolConfig` support (tool_choice: auto, any, specific tool)
 - Structured output via `ResponseSchema` (guaranteed schema-compliant JSON)
-- Extended thinking (mapped to `genai.Part` with `Thought=true`)
+- Extended thinking with `ThinkingConfig` support (level, budget, and response mapping to `genai.Part` with `Thought=true`)
 - Multimodal inputs (text, images)
 - PDF document processing (beta)
 - System instructions
@@ -152,6 +152,38 @@ Mode mapping:
 | `ModeAny` | `any` (must use a tool) |
 | `ModeAny` + single `AllowedFunctionNames` | `tool` (must use the named tool) |
 | `ModeNone` | omitted (no tool use) |
+
+### Extended Thinking (ThinkingConfig)
+
+Use `ThinkingConfig` to enable extended thinking:
+
+```go
+config := &genai.GenerateContentConfig{
+	ThinkingConfig: &genai.ThinkingConfig{
+		ThinkingLevel: genai.ThinkingLevelHigh,
+	},
+}
+```
+
+Or set an explicit token budget:
+
+```go
+config := &genai.GenerateContentConfig{
+	ThinkingConfig: &genai.ThinkingConfig{
+		ThinkingBudget: ptr(int32(5000)),
+	},
+}
+```
+
+Mapping:
+| `genai` ThinkingConfig | Anthropic Behavior |
+|---|---|
+| `ThinkingLevel: HIGH` | Thinking enabled, 10,000 token budget |
+| `ThinkingLevel: LOW` | Thinking enabled, 1,024 token budget (minimum) |
+| `ThinkingBudget` set | Thinking enabled with the exact budget (overrides level defaults) |
+| `IncludeThoughts: true` (no level/budget) | Thinking enabled, 10,000 token budget |
+
+Thinking blocks in responses are mapped to `genai.Part` with `Thought=true` and `ThoughtSignature` preserved for multi-turn conversations.
 
 ## License
 

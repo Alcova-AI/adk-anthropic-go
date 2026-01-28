@@ -887,6 +887,114 @@ func TestContentBlockToGenaiPart_WebSearchToolResult(t *testing.T) {
 	}
 }
 
+func int32Ptr(v int32) *int32 { return &v }
+
+func TestThinkingConfigToAnthropicThinking(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        *genai.ThinkingConfig
+		wantNil    bool // expect zero value (no thinking)
+		wantBudget int64
+	}{
+		{
+			name:    "nil config",
+			cfg:     nil,
+			wantNil: true,
+		},
+		{
+			name:       "HIGH level without budget",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			wantBudget: 10000,
+		},
+		{
+			name:       "LOW level without budget",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			wantBudget: 1024,
+		},
+		{
+			name:       "explicit budget",
+			cfg:        &genai.ThinkingConfig{ThinkingBudget: int32Ptr(5000)},
+			wantBudget: 5000,
+		},
+		{
+			name:       "level with explicit budget - budget wins",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow, ThinkingBudget: int32Ptr(8000)},
+			wantBudget: 8000,
+		},
+		{
+			name:       "IncludeThoughts alone",
+			cfg:        &genai.ThinkingConfig{IncludeThoughts: true},
+			wantBudget: 10000,
+		},
+		{
+			name:    "unspecified level no budget no include",
+			cfg:     &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelUnspecified},
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := converters.ThinkingConfigToAnthropicThinking(tt.cfg)
+			if tt.wantNil {
+				if got.OfEnabled != nil {
+					t.Errorf("expected zero value, got OfEnabled with budget %d", got.OfEnabled.BudgetTokens)
+				}
+				return
+			}
+			if got.OfEnabled == nil {
+				t.Fatal("expected OfEnabled to be non-nil")
+			}
+			if got.OfEnabled.BudgetTokens != tt.wantBudget {
+				t.Errorf("BudgetTokens = %d, want %d", got.OfEnabled.BudgetTokens, tt.wantBudget)
+			}
+		})
+	}
+}
+
+func TestThinkingConfigToBetaAnthropicThinking(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        *genai.ThinkingConfig
+		wantNil    bool
+		wantBudget int64
+	}{
+		{
+			name:    "nil config",
+			cfg:     nil,
+			wantNil: true,
+		},
+		{
+			name:       "HIGH level",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			wantBudget: 10000,
+		},
+		{
+			name:       "explicit budget",
+			cfg:        &genai.ThinkingConfig{ThinkingBudget: int32Ptr(3000)},
+			wantBudget: 3000,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := converters.ThinkingConfigToBetaAnthropicThinking(tt.cfg)
+			if tt.wantNil {
+				if got.OfEnabled != nil {
+					t.Errorf("expected zero value, got OfEnabled with budget %d", got.OfEnabled.BudgetTokens)
+				}
+				return
+			}
+			if got.OfEnabled == nil {
+				t.Fatal("expected OfEnabled to be non-nil")
+			}
+			if got.OfEnabled.BudgetTokens != tt.wantBudget {
+				t.Errorf("BudgetTokens = %d, want %d", got.OfEnabled.BudgetTokens, tt.wantBudget)
+			}
+		})
+	}
+}
+
 func TestToolConfigToToolChoice(t *testing.T) {
 	tests := []struct {
 		name      string
