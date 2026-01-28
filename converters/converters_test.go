@@ -855,6 +855,205 @@ func TestContentBlockToGenaiPart_WebSearchToolResult(t *testing.T) {
 	}
 }
 
+func TestToolConfigToToolChoice(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    *genai.ToolConfig
+		wantAuto  bool
+		wantAny   bool
+		wantTool  string
+		wantZero  bool
+		wantError bool
+	}{
+		{
+			name:     "nil config",
+			config:   nil,
+			wantZero: true,
+		},
+		{
+			name:     "nil FunctionCallingConfig",
+			config:   &genai.ToolConfig{},
+			wantZero: true,
+		},
+		{
+			name: "ModeNone",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeNone,
+				},
+			},
+			wantZero: true,
+		},
+		{
+			name: "ModeAuto",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeAuto,
+				},
+			},
+			wantAuto: true,
+		},
+		{
+			name: "ModeAny",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeAny,
+				},
+			},
+			wantAny: true,
+		},
+		{
+			name: "ModeAny with single AllowedFunctionName",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode:                 genai.FunctionCallingConfigModeAny,
+					AllowedFunctionNames: []string{"get_weather"},
+				},
+			},
+			wantTool: "get_weather",
+		},
+		{
+			name: "multiple AllowedFunctionNames returns error",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode:                 genai.FunctionCallingConfigModeAny,
+					AllowedFunctionNames: []string{"func1", "func2"},
+				},
+			},
+			wantError: true,
+		},
+		{
+			name: "unknown mode returns error",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigMode("UNKNOWN"),
+				},
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := converters.ToolConfigToToolChoice(tt.config)
+
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.wantZero {
+				if result.OfAuto != nil || result.OfAny != nil || result.OfTool != nil {
+					t.Error("expected zero-value result")
+				}
+				return
+			}
+			if tt.wantAuto && result.OfAuto == nil {
+				t.Error("expected OfAuto to be set")
+			}
+			if tt.wantAny && result.OfAny == nil {
+				t.Error("expected OfAny to be set")
+			}
+			if tt.wantTool != "" {
+				if result.OfTool == nil {
+					t.Fatal("expected OfTool to be set")
+				}
+				if result.OfTool.Name != tt.wantTool {
+					t.Errorf("OfTool.Name = %q, want %q", result.OfTool.Name, tt.wantTool)
+				}
+			}
+		})
+	}
+}
+
+func TestToolConfigToBetaToolChoice(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    *genai.ToolConfig
+		wantAuto  bool
+		wantAny   bool
+		wantTool  string
+		wantZero  bool
+		wantError bool
+	}{
+		{
+			name:     "nil config",
+			config:   nil,
+			wantZero: true,
+		},
+		{
+			name: "ModeAuto",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeAuto,
+				},
+			},
+			wantAuto: true,
+		},
+		{
+			name: "ModeAny with single AllowedFunctionName",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode:                 genai.FunctionCallingConfigModeAny,
+					AllowedFunctionNames: []string{"search"},
+				},
+			},
+			wantTool: "search",
+		},
+		{
+			name: "unknown mode returns error",
+			config: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigMode("INVALID"),
+				},
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := converters.ToolConfigToBetaToolChoice(tt.config)
+
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.wantZero {
+				if result.OfAuto != nil || result.OfAny != nil || result.OfTool != nil {
+					t.Error("expected zero-value result")
+				}
+				return
+			}
+			if tt.wantAuto && result.OfAuto == nil {
+				t.Error("expected OfAuto to be set")
+			}
+			if tt.wantAny && result.OfAny == nil {
+				t.Error("expected OfAny to be set")
+			}
+			if tt.wantTool != "" {
+				if result.OfTool == nil {
+					t.Fatal("expected OfTool to be set")
+				}
+				if result.OfTool.Name != tt.wantTool {
+					t.Errorf("OfTool.Name = %q, want %q", result.OfTool.Name, tt.wantTool)
+				}
+			}
+		})
+	}
+}
+
 func TestSchemaToJSONString(t *testing.T) {
 	tests := []struct {
 		name     string

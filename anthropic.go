@@ -410,9 +410,7 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 			if err != nil {
 				return anthropic.MessageNewParams{}, err
 			}
-			if toolChoice.OfAuto != nil || toolChoice.OfAny != nil || toolChoice.OfTool != nil {
-				params.ToolChoice = toolChoice
-			}
+			params.ToolChoice = toolChoice
 		}
 	}
 
@@ -473,9 +471,7 @@ func (m *anthropicModel) convertBetaRequest(req *model.LLMRequest) (anthropic.Be
 			if err != nil {
 				return anthropic.BetaMessageNewParams{}, err
 			}
-			if toolChoice.OfAuto != nil || toolChoice.OfAny != nil || toolChoice.OfTool != nil {
-				params.ToolChoice = toolChoice
-			}
+			params.ToolChoice = toolChoice
 		}
 	}
 
