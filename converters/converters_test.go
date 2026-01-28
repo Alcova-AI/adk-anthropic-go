@@ -903,7 +903,7 @@ func TestToolConfigToToolChoice(t *testing.T) {
 			wantAny: true,
 		},
 		{
-			name: "ModeAny with single AllowedFunctionName",
+			name: "ModeAny with single AllowedFunctionNames",
 			config: &genai.ToolConfig{
 				FunctionCallingConfig: &genai.FunctionCallingConfig{
 					Mode:                 genai.FunctionCallingConfigModeAny,
@@ -996,7 +996,7 @@ func TestToolConfigToBetaToolChoice(t *testing.T) {
 			wantAuto: true,
 		},
 		{
-			name: "ModeAny with single AllowedFunctionName",
+			name: "ModeAny with single AllowedFunctionNames",
 			config: &genai.ToolConfig{
 				FunctionCallingConfig: &genai.FunctionCallingConfig{
 					Mode:                 genai.FunctionCallingConfigModeAny,

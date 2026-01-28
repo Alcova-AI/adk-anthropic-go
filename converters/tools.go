@@ -72,7 +72,9 @@ func extractFunctionParams(fd *genai.FunctionDeclaration) (properties map[string
 			if props := jsonSchemaToProperties(schema); props != nil {
 				properties = props
 			}
-			required = schema.Required
+			if len(schema.Required) > 0 {
+				required = schema.Required
+			}
 		}
 	}
 
@@ -352,7 +354,10 @@ func resolveToolChoice(config *genai.ToolConfig) (resolvedToolChoice, error) {
 		return resolvedToolChoice{kind: toolChoiceAny}, nil
 
 	default:
-		return resolvedToolChoice{}, fmt.Errorf("unsupported FunctionCallingConfig mode %q", fcc.Mode)
+		return resolvedToolChoice{}, fmt.Errorf(
+			"unsupported FunctionCallingConfig mode %q; supported modes are: ModeNone, ModeAuto, ModeAny",
+			fcc.Mode,
+		)
 	}
 }
 
