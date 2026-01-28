@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.1.8] - Rename VertexRegion to VertexLocation and renamer env var
+## [v0.1.8] - Rename VertexRegion to VertexLocation and rename env var
 
 ### Breaking Changes
 
