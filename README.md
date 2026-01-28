@@ -13,7 +13,8 @@ go get github.com/Alcova-AI/adk-anthropic-go
 ## Features
 
 - Streaming and non-streaming responses
-- Tool/function calling
+- Tool/function calling with `ToolConfig` support (tool_choice: auto, any, specific tool)
+- Structured output via `ResponseSchema` (guaranteed schema-compliant JSON)
 - Extended thinking (mapped to `genai.Part` with `Thought=true`)
 - Multimodal inputs (text, images)
 - PDF document processing (beta)
@@ -111,6 +112,46 @@ type Config struct {
 	DefaultMaxTokens int
 }
 ```
+
+### Structured Output
+
+Set `ResponseSchema` on the request config to get guaranteed schema-compliant JSON responses. On the direct Anthropic API, this uses the Beta API with native structured outputs. On Vertex AI, it falls back to prompt-based JSON generation with automatic markdown fence stripping.
+
+```go
+config := &genai.GenerateContentConfig{
+	ResponseSchema: &genai.Schema{
+		Type:     genai.TypeObject,
+		Required: []string{"name", "age"},
+		Properties: map[string]*genai.Schema{
+			"name": {Type: genai.TypeString},
+			"age":  {Type: genai.TypeInteger},
+		},
+	},
+}
+```
+
+### Tool Choice (ToolConfig)
+
+Use `ToolConfig` to control how the model selects tools:
+
+```go
+config := &genai.GenerateContentConfig{
+	Tools: tools,
+	ToolConfig: &genai.ToolConfig{
+		FunctionCallingConfig: &genai.FunctionCallingConfig{
+			Mode: genai.FunctionCallingConfigModeAny, // must use a tool
+		},
+	},
+}
+```
+
+Mode mapping:
+| `genai` Mode | Anthropic `tool_choice` |
+|---|---|
+| `ModeAuto` | `auto` (model decides) |
+| `ModeAny` | `any` (must use a tool) |
+| `ModeAny` + single `AllowedFunctionNames` | `tool` (must use the named tool) |
+| `ModeNone` | omitted (no tool use) |
 
 ## License
 
