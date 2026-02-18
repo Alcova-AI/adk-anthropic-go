@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.2.0] - Upgrade anthropic-sdk-go to v1.24.0
+## [v0.1.10] - Upgrade anthropic-sdk-go to v1.24.0
 
 - Upgrade `anthropic-sdk-go` to v1.24.0 — structured outputs moved to GA, removing the need for the Beta API
 - Remove Beta message, content, tool, and response converters
