@@ -284,29 +284,6 @@ func SchemaToJSONString(schema *genai.Schema) string {
 	return string(b)
 }
 
-// ToolsToBetaAnthropicTools converts genai Tools to Anthropic BetaToolUnionParams.
-// Used for the Beta API (structured outputs).
-func ToolsToBetaAnthropicTools(tools []*genai.Tool) []anthropic.BetaToolUnionParam {
-	if len(tools) == 0 {
-		return nil
-	}
-
-	var result []anthropic.BetaToolUnionParam
-	for _, tool := range tools {
-		if tool == nil || len(tool.FunctionDeclarations) == 0 {
-			continue
-		}
-		for _, fd := range tool.FunctionDeclarations {
-			if fd == nil {
-				continue
-			}
-			toolParam := FunctionDeclarationToBetaTool(fd)
-			result = append(result, toolParam)
-		}
-	}
-	return result
-}
-
 // toolChoiceKind represents the resolved tool choice type.
 type toolChoiceKind int
 
@@ -398,54 +375,5 @@ func ToolConfigToToolChoice(config *genai.ToolConfig) (anthropic.ToolChoiceUnion
 		}, nil
 	default:
 		return anthropic.ToolChoiceUnionParam{}, fmt.Errorf("unexpected tool choice kind: %d", resolved.kind)
-	}
-}
-
-// ToolConfigToBetaToolChoice converts a genai.ToolConfig to Anthropic's Beta API tool_choice parameter.
-// Returns a zero-value union param when no tool_choice should be set (nil config, ModeNone),
-// which is safe to assign unconditionally as the SDK omits it during serialization.
-// Returns an error if AllowedFunctionNames contains more than one function name,
-// or if the FunctionCallingConfig mode is not recognized.
-func ToolConfigToBetaToolChoice(config *genai.ToolConfig) (anthropic.BetaToolChoiceUnionParam, error) {
-	resolved, err := resolveToolChoice(config)
-	if err != nil {
-		return anthropic.BetaToolChoiceUnionParam{}, err
-	}
-
-	switch resolved.kind {
-	case toolChoiceNone:
-		return anthropic.BetaToolChoiceUnionParam{}, nil
-	case toolChoiceAuto:
-		return anthropic.BetaToolChoiceUnionParam{
-			OfAuto: &anthropic.BetaToolChoiceAutoParam{},
-		}, nil
-	case toolChoiceAny:
-		return anthropic.BetaToolChoiceUnionParam{
-			OfAny: &anthropic.BetaToolChoiceAnyParam{},
-		}, nil
-	case toolChoiceTool:
-		return anthropic.BetaToolChoiceUnionParam{
-			OfTool: &anthropic.BetaToolChoiceToolParam{
-				Name: resolved.toolName,
-			},
-		}, nil
-	default:
-		return anthropic.BetaToolChoiceUnionParam{}, fmt.Errorf("unexpected tool choice kind: %d", resolved.kind)
-	}
-}
-
-// FunctionDeclarationToBetaTool converts a genai FunctionDeclaration to a BetaToolUnionParam.
-func FunctionDeclarationToBetaTool(fd *genai.FunctionDeclaration) anthropic.BetaToolUnionParam {
-	properties, required := extractFunctionParams(fd)
-
-	return anthropic.BetaToolUnionParam{
-		OfTool: &anthropic.BetaToolParam{
-			Name:        fd.Name,
-			Description: anthropic.String(fd.Description),
-			InputSchema: anthropic.BetaToolInputSchemaParam{
-				Properties: properties,
-				Required:   required,
-			},
-		},
 	}
 }

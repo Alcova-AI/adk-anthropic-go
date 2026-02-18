@@ -3,7 +3,7 @@ module github.com/Alcova-AI/adk-anthropic-go
 go 1.24.4
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.19.0
+	github.com/anthropics/anthropic-sdk-go v1.24.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/jsonschema-go v0.3.0
 	google.golang.org/adk v0.2.0
