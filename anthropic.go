@@ -283,6 +283,11 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 				},
 			}
 		}
+
+		// Thinking config
+		if req.Config.ThinkingConfig != nil {
+			params.Thinking = converters.ThinkingConfigToAnthropicThinking(req.Config.ThinkingConfig)
+		}
 	}
 
 	return params, nil

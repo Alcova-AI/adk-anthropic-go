@@ -368,3 +368,36 @@ func mergeConsecutiveMessages(messages []anthropic.MessageParam) []anthropic.Mes
 	return merged
 }
 
+// resolveThinkingBudget returns the thinking token budget for a ThinkingConfig,
+// or -1 if thinking should not be enabled.
+func resolveThinkingBudget(cfg *genai.ThinkingConfig) int64 {
+	if cfg == nil {
+		return -1
+	}
+
+	// Explicit budget always takes precedence.
+	if cfg.ThinkingBudget != nil {
+		return int64(*cfg.ThinkingBudget)
+	}
+
+	// Map thinking level to a default budget.
+	switch cfg.ThinkingLevel {
+	case genai.ThinkingLevelHigh:
+		return 10000
+	case genai.ThinkingLevelLow:
+		return 1024
+	default:
+		if cfg.IncludeThoughts {
+			return 10000
+		}
+		return -1
+	}
+}
+
+// ThinkingConfigToAnthropicThinking converts a genai ThinkingConfig to an Anthropic ThinkingConfigParamUnion.
+func ThinkingConfigToAnthropicThinking(cfg *genai.ThinkingConfig) anthropic.ThinkingConfigParamUnion {
+	if budget := resolveThinkingBudget(cfg); budget >= 0 {
+		return anthropic.ThinkingConfigParamOfEnabled(budget)
+	}
+	return anthropic.ThinkingConfigParamUnion{}
+}
