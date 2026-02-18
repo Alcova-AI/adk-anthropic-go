@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.1.10] - Upgrade anthropic-sdk-go to v1.24.0
+
+- Upgrade `anthropic-sdk-go` to v1.24.0 — structured outputs moved to GA, removing the need for the Beta API
+- Remove Beta message, content, tool, and response converters
+- Remove prompt-based JSON fallback for Vertex AI (no longer needed with GA structured outputs)
+- Use the GA Messages API with `OutputConfig.Format` for structured outputs
+
 ## [v0.1.9] - Map genai.ThinkingConfig to Anthropic extended thinking
 
 - Map `genai.ThinkingConfig` fields (`ThinkingLevel`, `ThinkingBudget`, `IncludeThoughts`) to Anthropic's `Thinking` parameter in both standard and Beta API requests

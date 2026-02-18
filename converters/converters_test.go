@@ -952,49 +952,6 @@ func TestThinkingConfigToAnthropicThinking(t *testing.T) {
 	}
 }
 
-func TestThinkingConfigToBetaAnthropicThinking(t *testing.T) {
-	tests := []struct {
-		name       string
-		cfg        *genai.ThinkingConfig
-		wantNil    bool
-		wantBudget int64
-	}{
-		{
-			name:    "nil config",
-			cfg:     nil,
-			wantNil: true,
-		},
-		{
-			name:       "HIGH level",
-			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
-			wantBudget: 10000,
-		},
-		{
-			name:       "explicit budget",
-			cfg:        &genai.ThinkingConfig{ThinkingBudget: int32Ptr(3000)},
-			wantBudget: 3000,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := converters.ThinkingConfigToBetaAnthropicThinking(tt.cfg)
-			if tt.wantNil {
-				if got.OfEnabled != nil {
-					t.Errorf("expected zero value, got OfEnabled with budget %d", got.OfEnabled.BudgetTokens)
-				}
-				return
-			}
-			if got.OfEnabled == nil {
-				t.Fatal("expected OfEnabled to be non-nil")
-			}
-			if got.OfEnabled.BudgetTokens != tt.wantBudget {
-				t.Errorf("BudgetTokens = %d, want %d", got.OfEnabled.BudgetTokens, tt.wantBudget)
-			}
-		})
-	}
-}
-
 func TestToolConfigToToolChoice(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1076,89 +1033,6 @@ func TestToolConfigToToolChoice(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := converters.ToolConfigToToolChoice(tt.config)
-
-			if tt.wantError {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			if tt.wantZero {
-				if result.OfAuto != nil || result.OfAny != nil || result.OfTool != nil {
-					t.Error("expected zero-value result")
-				}
-				return
-			}
-			if tt.wantAuto && result.OfAuto == nil {
-				t.Error("expected OfAuto to be set")
-			}
-			if tt.wantAny && result.OfAny == nil {
-				t.Error("expected OfAny to be set")
-			}
-			if tt.wantTool != "" {
-				if result.OfTool == nil {
-					t.Fatal("expected OfTool to be set")
-				}
-				if result.OfTool.Name != tt.wantTool {
-					t.Errorf("OfTool.Name = %q, want %q", result.OfTool.Name, tt.wantTool)
-				}
-			}
-		})
-	}
-}
-
-func TestToolConfigToBetaToolChoice(t *testing.T) {
-	tests := []struct {
-		name      string
-		config    *genai.ToolConfig
-		wantAuto  bool
-		wantAny   bool
-		wantTool  string
-		wantZero  bool
-		wantError bool
-	}{
-		{
-			name:     "nil config",
-			config:   nil,
-			wantZero: true,
-		},
-		{
-			name: "ModeAuto",
-			config: &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode: genai.FunctionCallingConfigModeAuto,
-				},
-			},
-			wantAuto: true,
-		},
-		{
-			name: "ModeAny with single AllowedFunctionNames",
-			config: &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode:                 genai.FunctionCallingConfigModeAny,
-					AllowedFunctionNames: []string{"search"},
-				},
-			},
-			wantTool: "search",
-		},
-		{
-			name: "unknown mode returns error",
-			config: &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode: genai.FunctionCallingConfigMode("INVALID"),
-				},
-			},
-			wantError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := converters.ToolConfigToBetaToolChoice(tt.config)
 
 			if tt.wantError {
 				if err == nil {

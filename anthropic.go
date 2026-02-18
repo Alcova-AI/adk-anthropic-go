@@ -18,10 +18,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"log/slog"
 	"os"
-	"regexp"
-	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -153,11 +150,6 @@ func (m *anthropicModel) GenerateContent(ctx context.Context, req *model.LLMRequ
 
 // generate calls the model synchronously.
 func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
-	// Use Beta API if structured outputs are requested
-	if req.Config != nil && req.Config.ResponseSchema != nil {
-		return m.generateWithStructuredOutput(ctx, req)
-	}
-
 	params, err := m.convertRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert request: %w", err)
@@ -174,137 +166,6 @@ func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*
 	}
 
 	return resp, nil
-}
-
-// generateWithStructuredOutput uses the Beta API for structured outputs.
-// For Vertex AI (which doesn't support the anthropic-beta header), it falls back
-// to prompt-based JSON output with the schema embedded in the system instruction.
-func (m *anthropicModel) generateWithStructuredOutput(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
-	if m.variant == VariantVertexAI {
-		return m.generateWithPromptBasedJSON(ctx, req)
-	}
-
-	params, err := m.convertBetaRequest(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert beta request: %w", err)
-	}
-
-	msg, err := m.client.Beta.Messages.New(ctx, params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call model with structured output: %w", err)
-	}
-
-	resp, err := converters.BetaMessageToLLMResponse(msg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert response: %w", err)
-	}
-
-	return resp, nil
-}
-
-// generateWithPromptBasedJSON falls back to prompt-based JSON for Vertex AI.
-// It embeds the JSON schema in the system instruction and asks the model to respond with valid JSON.
-func (m *anthropicModel) generateWithPromptBasedJSON(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
-	schemaJSON := converters.SchemaToJSONString(req.Config.ResponseSchema)
-
-	jsonInstruction := fmt.Sprintf(`You must respond with valid JSON that conforms to the following JSON schema:
-
-%s
-
-Respond ONLY with the JSON object, no markdown code fences, no explanations.`, schemaJSON)
-
-	// Clone the config to avoid mutating the original request
-	modifiedConfig := *req.Config
-	if modifiedConfig.SystemInstruction == nil {
-		modifiedConfig.SystemInstruction = &genai.Content{
-			Parts: []*genai.Part{{Text: jsonInstruction}},
-		}
-	} else {
-		existingText := ""
-		for _, part := range modifiedConfig.SystemInstruction.Parts {
-			if part.Text != "" {
-				existingText += part.Text + "\n\n"
-			}
-		}
-		modifiedConfig.SystemInstruction = &genai.Content{
-			Parts: []*genai.Part{{Text: existingText + jsonInstruction}},
-			Role:  modifiedConfig.SystemInstruction.Role,
-		}
-	}
-	modifiedConfig.ResponseSchema = nil
-
-	modifiedReq := &model.LLMRequest{
-		Model:    req.Model,
-		Contents: req.Contents,
-		Config:   &modifiedConfig,
-		Tools:    req.Tools,
-	}
-
-	params, err := m.convertRequest(modifiedReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert request: %w", err)
-	}
-
-	msg, err := m.client.Messages.New(ctx, params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call model: %w", err)
-	}
-
-	resp, err := converters.MessageToLLMResponse(msg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert response: %w", err)
-	}
-
-	// Strip markdown code fences from the response text since models sometimes
-	// wrap JSON in ```json ... ``` despite being told not to
-	stripMarkdownFromResponse(ctx, resp)
-
-	return resp, nil
-}
-
-// markdownFenceRegex matches ```json ... ``` or ``` ... ``` code blocks.
-// Uses non-greedy matching to handle the first complete fence block.
-// The (?s) flag enables dotall mode so . matches newlines.
-var markdownFenceRegex = regexp.MustCompile("(?s)^\\s*```(?:json)?\\s*\n?(.*?)\\s*```\\s*$")
-
-// markdownFenceExtractRegex is a more permissive regex that extracts JSON from
-// anywhere in the response, handling cases where the model adds preamble text.
-var markdownFenceExtractRegex = regexp.MustCompile("(?s)```(?:json)?\\s*\n?(\\{.*?\\}|\\[.*?\\])\\s*```")
-
-// stripMarkdownFromResponse removes markdown code fences from text parts in the response.
-// This handles cases where the model wraps JSON in ```json ... ``` despite instructions.
-// It tries two approaches:
-// 1. First, check if the entire text is wrapped in fences (strict match)
-// 2. If not, try to extract a JSON object/array from within fences (permissive match)
-func stripMarkdownFromResponse(ctx context.Context, resp *model.LLMResponse) {
-	if resp == nil || resp.Content == nil || len(resp.Content.Parts) == 0 {
-		return
-	}
-
-	for _, part := range resp.Content.Parts {
-		if part == nil || part.Text == "" {
-			continue
-		}
-
-		original := part.Text
-
-		// First try strict match: entire text is wrapped in fences
-		if matches := markdownFenceRegex.FindStringSubmatch(part.Text); len(matches) > 1 {
-			part.Text = strings.TrimSpace(matches[1])
-			slog.DebugContext(ctx, "stripped markdown fences from JSON response (strict)",
-				"original_length", len(original),
-				"stripped_length", len(part.Text))
-			continue
-		}
-
-		// Fall back to permissive match: extract JSON from within fences
-		if matches := markdownFenceExtractRegex.FindStringSubmatch(part.Text); len(matches) > 1 {
-			part.Text = strings.TrimSpace(matches[1])
-			slog.DebugContext(ctx, "extracted JSON from markdown fences (permissive)",
-				"original_length", len(original),
-				"stripped_length", len(part.Text))
-		}
-	}
 }
 
 // generateStream returns a stream of responses from the model.
@@ -413,75 +274,19 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 			params.ToolChoice = toolChoice
 		}
 
+		// Structured output format
+		if req.Config.ResponseSchema != nil {
+			schemaMap := converters.SchemaToMap(req.Config.ResponseSchema)
+			params.OutputConfig = anthropic.OutputConfigParam{
+				Format: anthropic.JSONOutputFormatParam{
+					Schema: schemaMap,
+				},
+			}
+		}
+
 		// Thinking config
 		if req.Config.ThinkingConfig != nil {
 			params.Thinking = converters.ThinkingConfigToAnthropicThinking(req.Config.ThinkingConfig)
-		}
-	}
-
-	return params, nil
-}
-
-// convertBetaRequest converts an LLMRequest to Anthropic BetaMessageNewParams for structured outputs.
-func (m *anthropicModel) convertBetaRequest(req *model.LLMRequest) (anthropic.BetaMessageNewParams, error) {
-	messages, err := converters.ContentsToBetaMessages(req.Contents)
-	if err != nil {
-		return anthropic.BetaMessageNewParams{}, fmt.Errorf("failed to convert contents: %w", err)
-	}
-
-	params := anthropic.BetaMessageNewParams{
-		Model:     anthropic.Model(m.name),
-		Messages:  messages,
-		MaxTokens: int64(m.defaultMaxTokens),
-		Betas:     []anthropic.AnthropicBeta{"structured-outputs-2025-11-13"},
-	}
-
-	if req.Config != nil {
-		// System instruction
-		if req.Config.SystemInstruction != nil {
-			params.System = converters.SystemInstructionToBetaSystem(req.Config.SystemInstruction)
-		}
-
-		// Generation parameters
-		if req.Config.Temperature != nil {
-			params.Temperature = anthropic.Float(float64(*req.Config.Temperature))
-		}
-		if req.Config.TopP != nil {
-			params.TopP = anthropic.Float(float64(*req.Config.TopP))
-		}
-		if req.Config.TopK != nil {
-			params.TopK = anthropic.Int(int64(*req.Config.TopK))
-		}
-		if len(req.Config.StopSequences) > 0 {
-			params.StopSequences = req.Config.StopSequences
-		}
-		if req.Config.MaxOutputTokens > 0 {
-			params.MaxTokens = int64(req.Config.MaxOutputTokens)
-		}
-
-		// Structured output schema
-		if req.Config.ResponseSchema != nil {
-			schemaMap := converters.SchemaToMap(req.Config.ResponseSchema)
-			params.OutputFormat = anthropic.BetaJSONSchemaOutputFormat(schemaMap)
-		}
-
-		// Tools
-		if len(req.Config.Tools) > 0 {
-			params.Tools = converters.ToolsToBetaAnthropicTools(req.Config.Tools)
-		}
-
-		// Tool choice from ToolConfig
-		if req.Config.ToolConfig != nil {
-			toolChoice, err := converters.ToolConfigToBetaToolChoice(req.Config.ToolConfig)
-			if err != nil {
-				return anthropic.BetaMessageNewParams{}, err
-			}
-			params.ToolChoice = toolChoice
-		}
-
-		// Thinking config
-		if req.Config.ThinkingConfig != nil {
-			params.Thinking = converters.ThinkingConfigToBetaAnthropicThinking(req.Config.ThinkingConfig)
 		}
 	}
 
