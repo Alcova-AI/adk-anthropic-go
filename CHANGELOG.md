@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.1.11] - Restore Vertex AI prompt-based JSON fallback
+
+- Restore prompt-based JSON fallback for Vertex AI — Vertex AI does not yet support `OutputConfig`, causing 400 "output_config: Extra inputs are not permitted" errors
+- Skip `OutputConfig` in `convertRequest` when variant is Vertex AI
+- Handle both streaming and non-streaming paths with prompt-based JSON + markdown fence stripping
+
 ## [v0.1.10] - Upgrade anthropic-sdk-go to v1.24.0
 
 - Upgrade `anthropic-sdk-go` to v1.24.0 — structured outputs moved to GA, removing the need for the Beta API
