@@ -18,7 +18,10 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"log/slog"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -150,6 +153,11 @@ func (m *anthropicModel) GenerateContent(ctx context.Context, req *model.LLMRequ
 
 // generate calls the model synchronously.
 func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
+	// Vertex AI doesn't support OutputConfig — fall back to prompt-based JSON.
+	if m.variant == VariantVertexAI && req.Config != nil && req.Config.ResponseSchema != nil {
+		return m.generateWithPromptBasedJSON(ctx, req)
+	}
+
 	params, err := m.convertRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert request: %w", err)
@@ -168,8 +176,39 @@ func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*
 	return resp, nil
 }
 
+// generateWithPromptBasedJSON falls back to prompt-based JSON for Vertex AI.
+// It embeds the JSON schema in the system instruction and asks the model to respond with valid JSON.
+func (m *anthropicModel) generateWithPromptBasedJSON(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
+	req = embedSchemaAsSystemPrompt(req)
+
+	params, err := m.convertRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert request: %w", err)
+	}
+
+	msg, err := m.client.Messages.New(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call model: %w", err)
+	}
+
+	resp, err := converters.MessageToLLMResponse(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert response: %w", err)
+	}
+
+	stripMarkdownFromResponse(ctx, resp)
+
+	return resp, nil
+}
+
 // generateStream returns a stream of responses from the model.
 func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+	// Vertex AI doesn't support OutputConfig — embed schema as a system prompt instead.
+	promptBasedJSON := m.variant == VariantVertexAI && req.Config != nil && req.Config.ResponseSchema != nil
+	if promptBasedJSON {
+		req = embedSchemaAsSystemPrompt(req)
+	}
+
 	return func(yield func(*model.LLMResponse, error) bool) {
 		params, err := m.convertRequest(req)
 		if err != nil {
@@ -218,6 +257,9 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 		if err != nil {
 			yield(nil, fmt.Errorf("failed to convert stream response: %w", err))
 			return
+		}
+		if promptBasedJSON {
+			stripMarkdownFromResponse(ctx, finalResp)
 		}
 		finalResp.TurnComplete = true
 		yield(finalResp, nil)
@@ -274,8 +316,8 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 			params.ToolChoice = toolChoice
 		}
 
-		// Structured output format
-		if req.Config.ResponseSchema != nil {
+		// Structured output format (not supported on Vertex AI — handled via prompt-based fallback)
+		if req.Config.ResponseSchema != nil && m.variant != VariantVertexAI {
 			schemaMap := converters.SchemaToMap(req.Config.ResponseSchema)
 			params.OutputConfig = anthropic.OutputConfigParam{
 				Format: anthropic.JSONOutputFormatParam{
@@ -305,5 +347,90 @@ func (m *anthropicModel) maybeAppendUserContent(req *model.LLMRequest) {
 	if last := req.Contents[len(req.Contents)-1]; last != nil && last.Role != "user" {
 		req.Contents = append(req.Contents,
 			genai.NewContentFromText("Continue processing previous requests as instructed.", "user"))
+	}
+}
+
+// embedSchemaAsSystemPrompt returns a cloned request with the JSON schema embedded
+// in the system instruction and ResponseSchema cleared. This is the prompt-based
+// fallback for Vertex AI, which doesn't support OutputConfig.
+func embedSchemaAsSystemPrompt(req *model.LLMRequest) *model.LLMRequest {
+	schemaJSON := converters.SchemaToJSONString(req.Config.ResponseSchema)
+
+	jsonInstruction := fmt.Sprintf(`You must respond with valid JSON that conforms to the following JSON schema:
+
+%s
+
+Respond ONLY with the JSON object, no markdown code fences, no explanations.`, schemaJSON)
+
+	// Clone the config to avoid mutating the original request.
+	modifiedConfig := *req.Config
+	if modifiedConfig.SystemInstruction == nil {
+		modifiedConfig.SystemInstruction = &genai.Content{
+			Parts: []*genai.Part{{Text: jsonInstruction}},
+		}
+	} else {
+		existingText := ""
+		for _, part := range modifiedConfig.SystemInstruction.Parts {
+			if part.Text != "" {
+				existingText += part.Text + "\n\n"
+			}
+		}
+		modifiedConfig.SystemInstruction = &genai.Content{
+			Parts: []*genai.Part{{Text: existingText + jsonInstruction}},
+			Role:  modifiedConfig.SystemInstruction.Role,
+		}
+	}
+	modifiedConfig.ResponseSchema = nil
+
+	return &model.LLMRequest{
+		Model:    req.Model,
+		Contents: req.Contents,
+		Config:   &modifiedConfig,
+		Tools:    req.Tools,
+	}
+}
+
+// markdownFenceRegex matches ```json ... ``` or ``` ... ``` code blocks.
+// Uses non-greedy matching to handle the first complete fence block.
+// The (?s) flag enables dotall mode so . matches newlines.
+var markdownFenceRegex = regexp.MustCompile("(?s)^\\s*```(?:json)?\\s*\n?(.*?)\\s*```\\s*$")
+
+// markdownFenceExtractRegex is a more permissive regex that extracts JSON from
+// anywhere in the response, handling cases where the model adds preamble text.
+var markdownFenceExtractRegex = regexp.MustCompile("(?s)```(?:json)?\\s*\n?(\\{.*?\\}|\\[.*?\\])\\s*```")
+
+// stripMarkdownFromResponse removes markdown code fences from text parts in the response.
+// This handles cases where the model wraps JSON in ```json ... ``` despite instructions.
+// It tries two approaches:
+// 1. First, check if the entire text is wrapped in fences (strict match)
+// 2. If not, try to extract a JSON object/array from within fences (permissive match)
+func stripMarkdownFromResponse(ctx context.Context, resp *model.LLMResponse) {
+	if resp == nil || resp.Content == nil || len(resp.Content.Parts) == 0 {
+		return
+	}
+
+	for _, part := range resp.Content.Parts {
+		if part == nil || part.Text == "" {
+			continue
+		}
+
+		original := part.Text
+
+		// First try strict match: entire text is wrapped in fences
+		if matches := markdownFenceRegex.FindStringSubmatch(part.Text); len(matches) > 1 {
+			part.Text = strings.TrimSpace(matches[1])
+			slog.DebugContext(ctx, "stripped markdown fences from JSON response (strict)",
+				"original_length", len(original),
+				"stripped_length", len(part.Text))
+			continue
+		}
+
+		// Fall back to permissive match: extract JSON from within fences
+		if matches := markdownFenceExtractRegex.FindStringSubmatch(part.Text); len(matches) > 1 {
+			part.Text = strings.TrimSpace(matches[1])
+			slog.DebugContext(ctx, "extracted JSON from markdown fences (permissive)",
+				"original_length", len(original),
+				"stripped_length", len(part.Text))
+		}
 	}
 }
