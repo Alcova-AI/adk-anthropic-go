@@ -111,6 +111,10 @@ func newAPIClient(cfg *Config) anthropic.Client {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}
 
+	if cfg.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+	}
+
 	return anthropic.NewClient(opts...)
 }
 

@@ -41,4 +41,6 @@ type Config struct {
 	// Anthropic requires max_tokens to be explicitly set for all requests.
 	// If not provided, defaults to 4096.
 	DefaultMaxTokens int
+
+	BaseURL string
 }
