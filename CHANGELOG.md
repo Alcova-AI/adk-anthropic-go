@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.1.13] - Raise default max output tokens, custom BaseURL, dependency upgrades
+
+- Raise default `MaxTokens` from 4096 to 16384 — the previous default was too low for agents producing large structured JSON outputs (e.g. meeting summaries), causing silent mid-JSON truncation. Callers can still override via `GenerateContentConfig.MaxOutputTokens`
+- Add `Config.BaseURL` field to allow custom API endpoint addresses for proxy services or private Anthropic API deployments
+- Upgrade `google.golang.org/adk` from v0.2.0 to v0.6.0
+- Upgrade `google.golang.org/genai` from v1.36.0 to v1.40.0
+- Upgrade `github.com/google/jsonschema-go` from v0.3.0 to v0.4.2
+
 ## [v0.1.11] - Restore Vertex AI prompt-based JSON fallback
 
 - Restore prompt-based JSON fallback for Vertex AI — Vertex AI does not yet support `OutputConfig`, causing 400 "output_config: Extra inputs are not permitted" errors

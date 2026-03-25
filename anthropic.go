@@ -32,7 +32,7 @@ import (
 	"google.golang.org/adk/model"
 )
 
-const defaultMaxTokens = 4096
+const defaultMaxTokens = 16384
 
 type anthropicModel struct {
 	client           anthropic.Client
