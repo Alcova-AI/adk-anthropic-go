@@ -108,7 +108,7 @@ type Config struct {
 	// Backend variant: VariantAnthropicAPI or VariantVertexAI
 	Variant string
 
-	// Default max tokens (default: 4096)
+	// Default max tokens (default: 16384)
 	DefaultMaxTokens int
 }
 ```

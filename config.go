@@ -39,7 +39,7 @@ type Config struct {
 
 	// DefaultMaxTokens is the default maximum number of tokens to generate.
 	// Anthropic requires max_tokens to be explicitly set for all requests.
-	// If not provided, defaults to 4096.
+	// If not provided, defaults to 16384.
 	DefaultMaxTokens int
 
 	BaseURL string
