@@ -39,6 +39,7 @@ type anthropicModel struct {
 	name             anthropic.Model
 	variant          string
 	defaultMaxTokens int
+	promptCaching    *PromptCachingConfig
 }
 
 // NewModel returns [model.LLM], backed by Anthropic Claude.
@@ -96,6 +97,7 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 		name:             modelName,
 		variant:          variant,
 		defaultMaxTokens: maxTokens,
+		promptCaching:    cfg.PromptCaching,
 	}, nil
 }
 
@@ -334,6 +336,10 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 		if req.Config.ThinkingConfig != nil {
 			params.Thinking = converters.ThinkingConfigToAnthropicThinking(req.Config.ThinkingConfig)
 		}
+	}
+
+	if m.promptCaching != nil {
+		applyCacheBreakpoints(&params, m.promptCaching)
 	}
 
 	return params, nil
