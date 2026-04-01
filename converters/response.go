@@ -197,9 +197,10 @@ func textCitationsToSlice(citations []anthropic.TextCitationUnion) []*genai.Cita
 // UsageToMetadata converts Anthropic Usage to genai UsageMetadata.
 func UsageToMetadata(usage anthropic.Usage) *genai.GenerateContentResponseUsageMetadata {
 	return &genai.GenerateContentResponseUsageMetadata{
-		PromptTokenCount:     int32(usage.InputTokens),
-		CandidatesTokenCount: int32(usage.OutputTokens),
-		TotalTokenCount:      int32(usage.InputTokens + usage.OutputTokens),
+		PromptTokenCount:        int32(usage.InputTokens),
+		CandidatesTokenCount:    int32(usage.OutputTokens),
+		TotalTokenCount:         int32(usage.InputTokens + usage.OutputTokens),
+		CachedContentTokenCount: int32(usage.CacheReadInputTokens),
 	}
 }
 
