@@ -195,11 +195,17 @@ func textCitationsToSlice(citations []anthropic.TextCitationUnion) []*genai.Cita
 }
 
 // UsageToMetadata converts Anthropic Usage to genai UsageMetadata.
+//
+// Anthropic reports input_tokens as non-cached tokens only, with cache tokens
+// as separate additive fields. The OTEL GenAI convention expects input_tokens
+// to be the total (cached + uncached), with cached as a subset. We normalise
+// here so that downstream cost calculations work correctly.
 func UsageToMetadata(usage anthropic.Usage) *genai.GenerateContentResponseUsageMetadata {
+	totalInput := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 	return &genai.GenerateContentResponseUsageMetadata{
-		PromptTokenCount:        int32(usage.InputTokens),
+		PromptTokenCount:        int32(totalInput),
 		CandidatesTokenCount:    int32(usage.OutputTokens),
-		TotalTokenCount:         int32(usage.InputTokens + usage.OutputTokens),
+		TotalTokenCount:         int32(totalInput + usage.OutputTokens),
 		CachedContentTokenCount: int32(usage.CacheReadInputTokens),
 	}
 }

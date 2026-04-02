@@ -1133,4 +1133,21 @@ func TestUsageToMetadata_CacheTokens(t *testing.T) {
 			t.Errorf("CachedContentTokenCount = %d, want 0", got.CachedContentTokenCount)
 		}
 	})
+
+	t.Run("PromptTokenCount includes cached and uncached tokens", func(t *testing.T) {
+		usage := anthropic.Usage{
+			InputTokens:               100,
+			OutputTokens:              50,
+			CacheReadInputTokens:      80,
+			CacheCreationInputTokens:  20,
+		}
+		got := converters.UsageToMetadata(usage)
+		// PromptTokenCount = InputTokens + CacheReadInputTokens + CacheCreationInputTokens
+		if got.PromptTokenCount != 200 {
+			t.Errorf("PromptTokenCount = %d, want 200", got.PromptTokenCount)
+		}
+		if got.TotalTokenCount != 250 {
+			t.Errorf("TotalTokenCount = %d, want 250", got.TotalTokenCount)
+		}
+	})
 }
