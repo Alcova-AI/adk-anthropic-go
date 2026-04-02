@@ -1112,3 +1112,42 @@ func TestSchemaToJSONString(t *testing.T) {
 		})
 	}
 }
+
+func TestUsageToMetadata_CacheTokens(t *testing.T) {
+	t.Run("cache read tokens mapped to CachedContentTokenCount", func(t *testing.T) {
+		usage := anthropic.Usage{
+			InputTokens:          100,
+			OutputTokens:         50,
+			CacheReadInputTokens: 80,
+		}
+		got := converters.UsageToMetadata(usage)
+		if got.CachedContentTokenCount != 80 {
+			t.Errorf("CachedContentTokenCount = %d, want 80", got.CachedContentTokenCount)
+		}
+	})
+
+	t.Run("zero cache tokens stays zero", func(t *testing.T) {
+		usage := anthropic.Usage{InputTokens: 10, OutputTokens: 20}
+		got := converters.UsageToMetadata(usage)
+		if got.CachedContentTokenCount != 0 {
+			t.Errorf("CachedContentTokenCount = %d, want 0", got.CachedContentTokenCount)
+		}
+	})
+
+	t.Run("PromptTokenCount includes cached and uncached tokens", func(t *testing.T) {
+		usage := anthropic.Usage{
+			InputTokens:               100,
+			OutputTokens:              50,
+			CacheReadInputTokens:      80,
+			CacheCreationInputTokens:  20,
+		}
+		got := converters.UsageToMetadata(usage)
+		// PromptTokenCount = InputTokens + CacheReadInputTokens + CacheCreationInputTokens
+		if got.PromptTokenCount != 200 {
+			t.Errorf("PromptTokenCount = %d, want 200", got.PromptTokenCount)
+		}
+		if got.TotalTokenCount != 250 {
+			t.Errorf("TotalTokenCount = %d, want 250", got.TotalTokenCount)
+		}
+	})
+}

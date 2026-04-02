@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.1.14] - Configurable prompt caching
+
+- **Configurable prompt caching** via `Config.PromptCaching`. Four independently optional breakpoints:
+  - `Auto` — top-level `cache_control` for automatic breakpoint placement
+  - `SystemInstruction` — breakpoint on the last system text block
+  - `Tools` — breakpoint on the last tool definition
+  - `ConversationHistory` — breakpoint on the penultimate message
+  
+  Each breakpoint has its own TTL (5m default or 1h). Caching is off by default.
+- **Cache usage token mapping**: `CacheReadInputTokens` from Anthropic responses is now mapped to genai's `CachedContentTokenCount` for OTEL tracing
+- Upgrade `anthropic-sdk-go` from v1.24.0 to v1.28.0 for top-level `CacheControl` support
+
 ## [v0.1.13] - Raise default max output tokens, custom BaseURL, dependency upgrades
 
 - Raise default `MaxTokens` from 4096 to 16384 — the previous default was too low for agents producing large structured JSON outputs (e.g. meeting summaries), causing silent mid-JSON truncation. Callers can still override via `GenerateContentConfig.MaxOutputTokens`
