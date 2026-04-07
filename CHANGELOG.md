@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.1.15] - Upgrade to ADK Go v1.0.0
+
+- Upgrade `google.golang.org/adk` from v0.6.0 to v1.0.0
+- Bump minimum Go version from 1.24.4 to 1.25.0 to match ADK v1.0.0's toolchain requirement
+- Pulls in transitive bumps: `google.golang.org/grpc` v1.78.0 → v1.79.3
+- No source changes required — this adapter only consumes `google.golang.org/adk/model`, which is API-compatible between v0.6.0 and v1.0.0
+
 ## [v0.1.14] - Configurable prompt caching
 
 - **Configurable prompt caching** via `Config.PromptCaching`. Four independently optional breakpoints:

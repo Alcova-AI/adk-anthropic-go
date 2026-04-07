@@ -1,12 +1,12 @@
 module github.com/Alcova-AI/adk-anthropic-go
 
-go 1.24.4
+go 1.25.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.28.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/jsonschema-go v0.4.2
-	google.golang.org/adk v0.6.0
+	google.golang.org/adk v1.0.0
 	google.golang.org/genai v1.40.0
 )
 
@@ -42,6 +42,6 @@ require (
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/api v0.252.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260128011058-8636f8732409 // indirect
-	google.golang.org/grpc v1.78.0 // indirect
+	google.golang.org/grpc v1.79.3 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
