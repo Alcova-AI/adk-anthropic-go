@@ -975,6 +975,156 @@ func TestThinkingConfigToAnthropicThinking(t *testing.T) {
 	}
 }
 
+func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
+	tests := []struct {
+		name         string
+		cfg          *genai.ThinkingConfig
+		model        anthropic.Model
+		wantNil      bool // expect zero-value thinking
+		wantAdaptive bool
+		wantBudget   int64
+		wantEffort   anthropic.OutputConfigEffort
+	}{
+		// Model-aware level → adaptive + effort
+		{
+			name:         "HIGH on Sonnet 4.6 → adaptive + high effort",
+			cfg:          &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:        anthropic.ModelClaudeSonnet4_6,
+			wantAdaptive: true,
+			wantEffort:   anthropic.OutputConfigEffortHigh,
+		},
+		{
+			name:         "MEDIUM on Opus 4.6 → adaptive + medium effort",
+			cfg:          &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMedium},
+			model:        anthropic.ModelClaudeOpus4_6,
+			wantAdaptive: true,
+			wantEffort:   anthropic.OutputConfigEffortMedium,
+		},
+		{
+			name:         "LOW on Opus 4.7 → adaptive + low effort",
+			cfg:          &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:        anthropic.ModelClaudeOpus4_7,
+			wantAdaptive: true,
+			wantEffort:   anthropic.OutputConfigEffortLow,
+		},
+		{
+			name:         "HIGH on Mythos Preview → adaptive + high effort",
+			cfg:          &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:        anthropic.ModelClaudeMythosPreview,
+			wantAdaptive: true,
+			wantEffort:   anthropic.OutputConfigEffortHigh,
+		},
+		{
+			name:         "versioned Sonnet 4.6 model name still maps to adaptive",
+			cfg:          &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:        anthropic.Model("claude-sonnet-4-6-20251001"),
+			wantAdaptive: true,
+			wantEffort:   anthropic.OutputConfigEffortHigh,
+		},
+
+		// Non-adaptive models fall back to manual budget
+		{
+			name:       "HIGH on Haiku 4.5 → manual budget 10000 (no effort)",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:      anthropic.ModelClaudeHaiku4_5,
+			wantBudget: 10000,
+		},
+		{
+			name:       "MEDIUM on Haiku 4.5 → manual budget 5000 (no effort)",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMedium},
+			model:      anthropic.ModelClaudeHaiku4_5,
+			wantBudget: 5000,
+		},
+		{
+			name:       "LOW on Sonnet 4.5 (non-adaptive) → manual budget 1024",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:      anthropic.ModelClaudeSonnet4_5,
+			wantBudget: 1024,
+		},
+
+		// IncludeThoughts behaves per model class
+		{
+			name:         "IncludeThoughts on Sonnet 4.6 → adaptive + high effort",
+			cfg:          &genai.ThinkingConfig{IncludeThoughts: true},
+			model:        anthropic.ModelClaudeSonnet4_6,
+			wantAdaptive: true,
+			wantEffort:   anthropic.OutputConfigEffortHigh,
+		},
+		{
+			name:       "IncludeThoughts on Haiku 4.5 → manual budget 10000",
+			cfg:        &genai.ThinkingConfig{IncludeThoughts: true},
+			model:      anthropic.ModelClaudeHaiku4_5,
+			wantBudget: 10000,
+		},
+
+		// Explicit overrides remain authoritative
+		{
+			name:         "AdaptiveThinkingLevel sentinel still wins on any model",
+			cfg:          &genai.ThinkingConfig{ThinkingLevel: converters.AdaptiveThinkingLevel},
+			model:        anthropic.ModelClaudeHaiku4_5, // even on a non-adaptive model
+			wantAdaptive: true,
+		},
+		{
+			name:       "ThinkingBudget overrides level on any model",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh, ThinkingBudget: int32Ptr(2048)},
+			model:      anthropic.ModelClaudeSonnet4_6,
+			wantBudget: 2048,
+		},
+
+		// Empty model name (legacy single-arg behaviour) prefers manual budget
+		{
+			name:       "HIGH with empty model → manual budget 10000 (legacy fallback)",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:      "",
+			wantBudget: 10000,
+		},
+
+		// Nil config → nothing
+		{
+			name:    "nil config returns zero mapping",
+			cfg:     nil,
+			model:   anthropic.ModelClaudeSonnet4_6,
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := converters.ThinkingConfigToAnthropic(tt.cfg, tt.model)
+
+			if tt.wantNil {
+				if got.Thinking.OfEnabled != nil || got.Thinking.OfAdaptive != nil {
+					t.Errorf("expected zero Thinking, got %+v", got.Thinking)
+				}
+				if got.Effort != "" {
+					t.Errorf("expected zero Effort, got %q", got.Effort)
+				}
+				return
+			}
+
+			if tt.wantAdaptive {
+				if got.Thinking.OfAdaptive == nil {
+					t.Fatal("expected OfAdaptive non-nil")
+				}
+				if got.Thinking.OfEnabled != nil {
+					t.Errorf("expected only OfAdaptive, also got OfEnabled with budget %d", got.Thinking.OfEnabled.BudgetTokens)
+				}
+			} else {
+				if got.Thinking.OfEnabled == nil {
+					t.Fatal("expected OfEnabled non-nil")
+				}
+				if got.Thinking.OfEnabled.BudgetTokens != tt.wantBudget {
+					t.Errorf("BudgetTokens = %d, want %d", got.Thinking.OfEnabled.BudgetTokens, tt.wantBudget)
+				}
+			}
+
+			if got.Effort != tt.wantEffort {
+				t.Errorf("Effort = %q, want %q", got.Effort, tt.wantEffort)
+			}
+		})
+	}
+}
+
 func TestToolConfigToToolChoice(t *testing.T) {
 	tests := []struct {
 		name      string

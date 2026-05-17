@@ -1,10 +1,16 @@
 # Changelog
 
-## [v0.1.16] - Map adaptive extended thinking
+## [v0.1.16] - Model-aware adaptive thinking + effort mapping
 
-- Add `AdaptiveThinkingLevel` sentinel (`genai.ThinkingLevel = "ANTHROPIC_ADAPTIVE"`) that the converter maps to Anthropic's adaptive thinking mode (`thinking: {type: "adaptive"}`). Set `ThinkingConfig.ThinkingLevel = converters.AdaptiveThinkingLevel` to enable.
-- Recommended on Claude Sonnet 4.6+ and Opus 4.6+ for agentic workflows; the only supported thinking mode on Opus 4.7.
-- `ThinkingConfigToAnthropicThinking` mapping order: adaptive sentinel takes precedence; otherwise the existing `ThinkingBudget` / `ThinkingLevel` / `IncludeThoughts` logic decides between manual extended thinking and no thinking.
+- Upgrade `anthropic-sdk-go` from v1.28.0 to v1.43.0 — picks up `ModelClaudeOpus4_7`, `ModelClaudeMythosPreview`, and `OutputConfigEffortXhigh` constants.
+- Add `AdaptiveThinkingLevel` sentinel (`genai.ThinkingLevel = "ANTHROPIC_ADAPTIVE"`) for callers that want to opt into adaptive mode explicitly regardless of model.
+- New model-aware mapper `ThinkingConfigToAnthropic(cfg, model)` returning `ThinkingMapping{Thinking, Effort}`:
+  - On adaptive-capable models (Sonnet 4.6+, Opus 4.6+, Opus 4.7, Mythos Preview), `ThinkingLevel: Low/Medium/High` maps to **adaptive mode + matching `OutputConfig.Effort`** (low/medium/high) — instead of the old single-budget mapping. `IncludeThoughts: true` similarly maps to adaptive + high effort.
+  - On non-adaptive models (Sonnet 4.5, Haiku 4.5, etc.), the same fields fall back to manual extended thinking (`type: "enabled", budget_tokens: N`), preserving v0.1.9 behaviour.
+  - Explicit `ThinkingBudget` always wins (manual mode with that exact budget).
+  - Adaptive sentinel always wins (adaptive mode without effort hint).
+- `anthropic.go` now sets `params.OutputConfig.Effort` from the mapping when adaptive mode is selected.
+- `ThinkingConfigToAnthropicThinking(cfg)` retained as a deprecated thin wrapper for the previous single-arg shape — preserves the manual-budget behaviour for callers that don't have a model handy.
 
 ## [v0.1.15] - Upgrade to ADK Go v1.0.0
 

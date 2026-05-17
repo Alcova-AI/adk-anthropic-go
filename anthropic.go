@@ -332,9 +332,14 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 			}
 		}
 
-		// Thinking config
+		// Thinking config (model-aware: adaptive mode + effort on capable
+		// models, manual budget on older models)
 		if req.Config.ThinkingConfig != nil {
-			params.Thinking = converters.ThinkingConfigToAnthropicThinking(req.Config.ThinkingConfig)
+			mapping := converters.ThinkingConfigToAnthropic(req.Config.ThinkingConfig, params.Model)
+			params.Thinking = mapping.Thinking
+			if mapping.Effort != "" {
+				params.OutputConfig.Effort = mapping.Effort
+			}
 		}
 	}
 
