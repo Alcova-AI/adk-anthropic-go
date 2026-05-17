@@ -445,26 +445,18 @@ func adaptiveThinking() anthropic.ThinkingConfigParamUnion {
 }
 
 // supportsAdaptiveThinking reports whether `model` accepts adaptive thinking
-// (thinking: {type: "adaptive"}). Matches by prefix so versioned variants
-// like "claude-sonnet-4-6-20251001" map to the same capability as the
-// unversioned alias.
+// (thinking: {type: "adaptive"}). Matches against the SDK's canonical
+// unversioned aliases — when Anthropic ships a new adaptive-capable model
+// or a new dated variant, bump anthropic-sdk-go and add the constant here.
 func supportsAdaptiveThinking(model anthropic.Model) bool {
-	s := string(model)
-	for _, prefix := range adaptiveCapablePrefixes {
-		if strings.HasPrefix(s, prefix) {
-			return true
-		}
+	switch model {
+	case anthropic.ModelClaudeSonnet4_6,
+		anthropic.ModelClaudeOpus4_6,
+		anthropic.ModelClaudeOpus4_7,
+		anthropic.ModelClaudeMythosPreview:
+		return true
 	}
 	return false
-}
-
-// adaptiveCapablePrefixes lists the Claude model-name prefixes that support
-// adaptive thinking. Update when Anthropic adds new adaptive-capable models.
-var adaptiveCapablePrefixes = []string{
-	"claude-sonnet-4-6",
-	"claude-opus-4-6",
-	"claude-opus-4-7",
-	"claude-mythos",
 }
 
 // levelToEffort maps a genai ThinkingLevel to the matching Anthropic

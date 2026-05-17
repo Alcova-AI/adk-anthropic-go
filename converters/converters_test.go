@@ -1005,11 +1005,10 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 			wantEffort:   anthropic.OutputConfigEffortHigh,
 		},
 		{
-			name:         "versioned Sonnet 4.6 model name still maps to adaptive",
-			cfg:          &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
-			model:        anthropic.Model("claude-sonnet-4-6-20251001"),
-			wantAdaptive: true,
-			wantEffort:   anthropic.OutputConfigEffortHigh,
+			name:       "unknown dated variant (no SDK constant yet) falls back to manual",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:      anthropic.Model("claude-sonnet-4-6-20251201"), // hypothetical future date
+			wantBudget: 10000,
 		},
 
 		// Non-adaptive models fall back to manual budget
