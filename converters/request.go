@@ -368,18 +368,6 @@ func mergeConsecutiveMessages(messages []anthropic.MessageParam) []anthropic.Mes
 	return merged
 }
 
-// AdaptiveThinkingLevel is a sentinel ThinkingLevel that maps to Anthropic's
-// adaptive thinking mode (thinking: {type: "adaptive"}). genai itself has no
-// "adaptive" concept since it's Google's SDK, so callers can set this string
-// on genai.ThinkingConfig.ThinkingLevel to opt into Anthropic's adaptive mode
-// explicitly. Most callers won't need to — passing genai.ThinkingLevelHigh
-// (or Low/Medium) plus an adaptive-capable model gets adaptive mode plus an
-// effort hint automatically.
-//
-// Recommended on Claude Opus 4.6+ and Sonnet 4.6+ for agentic workflows;
-// the only supported thinking mode on Opus 4.7 + Mythos Preview.
-const AdaptiveThinkingLevel genai.ThinkingLevel = "ANTHROPIC_ADAPTIVE"
-
 // ThinkingMapping bundles the Anthropic thinking parameter and the optional
 // effort level that maps from a genai.ThinkingConfig. Effort is non-empty
 // only when adaptive mode + a level hint produced one — manual extended
@@ -399,19 +387,15 @@ type ThinkingMapping struct {
 //
 // Mapping order (first matching rule wins):
 //  1. cfg == nil                                       → off (field omitted)
-//  2. ThinkingLevel == AdaptiveThinkingLevel           → adaptive, no effort
-//  3. ThinkingBudget set                               → manual budget (explicit)
-//  4. ThinkingLevel ∈ {Low, Medium, High}, adaptive    → adaptive + effort
-//  5. ThinkingLevel ∈ {Low, Medium, High}, manual-only → manual budget mapped from level
-//  6. IncludeThoughts, adaptive-capable model          → adaptive + high effort
-//  7. IncludeThoughts, manual-only model               → manual budget=10000
-//  8. otherwise                                        → off
+//  2. ThinkingBudget set                               → manual budget (explicit)
+//  3. ThinkingLevel ∈ {Low, Medium, High}, adaptive    → adaptive + effort
+//  4. ThinkingLevel ∈ {Low, Medium, High}, manual-only → manual budget mapped from level
+//  5. IncludeThoughts, adaptive-capable model          → adaptive + high effort
+//  6. IncludeThoughts, manual-only model               → manual budget=10000
+//  7. otherwise                                        → off
 func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model) ThinkingMapping {
 	if cfg == nil {
 		return ThinkingMapping{}
-	}
-	if cfg.ThinkingLevel == AdaptiveThinkingLevel {
-		return ThinkingMapping{Thinking: adaptiveThinking()}
 	}
 	if cfg.ThinkingBudget != nil {
 		return ThinkingMapping{Thinking: anthropic.ThinkingConfigParamOfEnabled(int64(*cfg.ThinkingBudget))}

@@ -932,16 +932,6 @@ func TestThinkingConfigToAnthropicThinking(t *testing.T) {
 			cfg:     &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelUnspecified},
 			wantNil: true,
 		},
-		{
-			name:         "adaptive sentinel level",
-			cfg:          &genai.ThinkingConfig{ThinkingLevel: converters.AdaptiveThinkingLevel},
-			wantAdaptive: true,
-		},
-		{
-			name:         "adaptive sentinel beats explicit budget",
-			cfg:          &genai.ThinkingConfig{ThinkingLevel: converters.AdaptiveThinkingLevel, ThinkingBudget: int32Ptr(5000)},
-			wantAdaptive: true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -1058,12 +1048,6 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 		},
 
 		// Explicit overrides remain authoritative
-		{
-			name:         "AdaptiveThinkingLevel sentinel still wins on any model",
-			cfg:          &genai.ThinkingConfig{ThinkingLevel: converters.AdaptiveThinkingLevel},
-			model:        anthropic.ModelClaudeHaiku4_5, // even on a non-adaptive model
-			wantAdaptive: true,
-		},
 		{
 			name:       "ThinkingBudget overrides level on any model",
 			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh, ThinkingBudget: int32Ptr(2048)},
