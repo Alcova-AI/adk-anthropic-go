@@ -891,10 +891,11 @@ func int32Ptr(v int32) *int32 { return &v }
 
 func TestThinkingConfigToAnthropicThinking(t *testing.T) {
 	tests := []struct {
-		name       string
-		cfg        *genai.ThinkingConfig
-		wantNil    bool // expect zero value (no thinking)
-		wantBudget int64
+		name         string
+		cfg          *genai.ThinkingConfig
+		wantNil      bool // expect zero value (no thinking)
+		wantAdaptive bool // expect OfAdaptive populated
+		wantBudget   int64
 	}{
 		{
 			name:    "nil config",
@@ -931,6 +932,16 @@ func TestThinkingConfigToAnthropicThinking(t *testing.T) {
 			cfg:     &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelUnspecified},
 			wantNil: true,
 		},
+		{
+			name:         "adaptive sentinel level",
+			cfg:          &genai.ThinkingConfig{ThinkingLevel: converters.AdaptiveThinkingLevel},
+			wantAdaptive: true,
+		},
+		{
+			name:         "adaptive sentinel beats explicit budget",
+			cfg:          &genai.ThinkingConfig{ThinkingLevel: converters.AdaptiveThinkingLevel, ThinkingBudget: int32Ptr(5000)},
+			wantAdaptive: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -939,6 +950,18 @@ func TestThinkingConfigToAnthropicThinking(t *testing.T) {
 			if tt.wantNil {
 				if got.OfEnabled != nil {
 					t.Errorf("expected zero value, got OfEnabled with budget %d", got.OfEnabled.BudgetTokens)
+				}
+				if got.OfAdaptive != nil {
+					t.Errorf("expected zero value, got OfAdaptive populated")
+				}
+				return
+			}
+			if tt.wantAdaptive {
+				if got.OfAdaptive == nil {
+					t.Fatal("expected OfAdaptive to be non-nil")
+				}
+				if got.OfEnabled != nil {
+					t.Errorf("expected only OfAdaptive, got OfEnabled with budget %d", got.OfEnabled.BudgetTokens)
 				}
 				return
 			}

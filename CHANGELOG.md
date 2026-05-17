@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.1.16] - Map adaptive extended thinking
+
+- Add `AdaptiveThinkingLevel` sentinel (`genai.ThinkingLevel = "ANTHROPIC_ADAPTIVE"`) that the converter maps to Anthropic's adaptive thinking mode (`thinking: {type: "adaptive"}`). Set `ThinkingConfig.ThinkingLevel = converters.AdaptiveThinkingLevel` to enable.
+- Recommended on Claude Sonnet 4.6+ and Opus 4.6+ for agentic workflows; the only supported thinking mode on Opus 4.7.
+- `ThinkingConfigToAnthropicThinking` mapping order: adaptive sentinel takes precedence; otherwise the existing `ThinkingBudget` / `ThinkingLevel` / `IncludeThoughts` logic decides between manual extended thinking and no thinking.
+
 ## [v0.1.15] - Upgrade to ADK Go v1.0.0
 
 - Upgrade `google.golang.org/adk` from v0.6.0 to v1.0.0

@@ -368,6 +368,15 @@ func mergeConsecutiveMessages(messages []anthropic.MessageParam) []anthropic.Mes
 	return merged
 }
 
+// AdaptiveThinkingLevel is a sentinel ThinkingLevel that maps to Anthropic's
+// adaptive thinking mode (thinking: {type: "adaptive"}). genai itself has no
+// "adaptive" concept since it's Google's SDK, so callers set this string on
+// genai.ThinkingConfig.ThinkingLevel to opt into Anthropic's adaptive mode.
+//
+// Recommended on Claude Opus 4.6+ and Sonnet 4.6+ for agentic workflows;
+// the only supported mode on Opus 4.7.
+const AdaptiveThinkingLevel genai.ThinkingLevel = "ANTHROPIC_ADAPTIVE"
+
 // resolveThinkingBudget returns the thinking token budget for a ThinkingConfig,
 // or -1 if thinking should not be enabled.
 func resolveThinkingBudget(cfg *genai.ThinkingConfig) int64 {
@@ -394,8 +403,21 @@ func resolveThinkingBudget(cfg *genai.ThinkingConfig) int64 {
 	}
 }
 
-// ThinkingConfigToAnthropicThinking converts a genai ThinkingConfig to an Anthropic ThinkingConfigParamUnion.
+// ThinkingConfigToAnthropicThinking converts a genai ThinkingConfig to an
+// Anthropic ThinkingConfigParamUnion.
+//
+// Mapping rules (checked in order):
+//   - ThinkingLevel == AdaptiveThinkingLevel → Anthropic adaptive mode
+//     (thinking: {type: "adaptive"}). Recommended on Sonnet 4.6+ and Opus 4.6+.
+//   - resolveThinkingBudget(cfg) >= 0 → Anthropic manual mode
+//     (thinking: {type: "enabled", budget_tokens: N}).
+//   - otherwise → zero-value (thinking field omitted from the request → off).
 func ThinkingConfigToAnthropicThinking(cfg *genai.ThinkingConfig) anthropic.ThinkingConfigParamUnion {
+	if cfg != nil && cfg.ThinkingLevel == AdaptiveThinkingLevel {
+		return anthropic.ThinkingConfigParamUnion{
+			OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{},
+		}
+	}
 	if budget := resolveThinkingBudget(cfg); budget >= 0 {
 		return anthropic.ThinkingConfigParamOfEnabled(budget)
 	}
