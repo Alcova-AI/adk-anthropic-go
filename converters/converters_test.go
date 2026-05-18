@@ -1077,11 +1077,29 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 			wantNil: true,
 		},
 
-		// Nil config → nothing
+		// Nil config: per-tier default (adaptive on capable, off on manual-only)
 		{
-			name:    "nil config returns zero mapping",
+			name:         "nil config on adaptive-capable model → adaptive default",
+			cfg:          nil,
+			model:        anthropic.ModelClaudeSonnet4_6,
+			wantAdaptive: true,
+		},
+		{
+			name:    "nil config on manual-only model → off",
 			cfg:     nil,
-			model:   anthropic.ModelClaudeSonnet4_6,
+			model:   anthropic.ModelClaudeHaiku4_5,
+			wantNil: true,
+		},
+		{
+			name:         "empty cfg on adaptive-capable model → adaptive default",
+			cfg:          &genai.ThinkingConfig{},
+			model:        anthropic.ModelClaudeSonnet4_6,
+			wantAdaptive: true,
+		},
+		{
+			name:    "empty cfg on manual-only model → off",
+			cfg:     &genai.ThinkingConfig{},
+			model:   anthropic.ModelClaudeHaiku4_5,
 			wantNil: true,
 		},
 	}

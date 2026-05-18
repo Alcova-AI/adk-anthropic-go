@@ -378,45 +378,46 @@ type ThinkingMapping struct {
 }
 
 // ThinkingConfigToAnthropic maps a genai.ThinkingConfig to Anthropic's
-// Thinking parameter + optional OutputConfig.Effort hint. The model name is
-// consulted so that adaptive-capable models (Sonnet 4.6+, Opus 4.6+, Opus
-// 4.7, Mythos Preview) get adaptive mode + effort, while older models
-// (Sonnet 4.5, Haiku 4.5, etc.) fall back to manual extended thinking with
-// a token budget — preserving the original v0.1.9 behaviour for models that
-// don't support adaptive.
+// Thinking parameter + optional OutputConfig.Effort hint. The model is
+// consulted so adaptive-capable models (Sonnet 4.6+, Opus 4.6+, Opus 4.7,
+// Mythos Preview) get adaptive mode + effort, while older models (Sonnet
+// 4.5, Haiku 4.5, etc.) fall back to manual extended thinking with a
+// token budget — preserving v0.1.9 behaviour for models that don't
+// support adaptive.
 //
-// The ThinkingLevel → effort mapping is calibrated to match Gemini 3's
-// own ThinkingLevel semantics so the same config produces equivalent
-// reasoning intensity across providers (per ai.google.dev/gemini-api/docs/thinking
-// and docs.claude.com/en/docs/build-with-claude/adaptive-thinking):
+// The Anthropic class ↔ Gemini class mapping is:
 //
-//   - Minimal — Gemini "no thinking for most queries"; Anthropic "off"
-//     (closest equivalent — Anthropic has no explicit minimal tier).
-//   - Low — Gemini "minimizes latency and cost"; Anthropic effort=low
-//     "minimizes thinking, skips for simple tasks". Aligned.
-//   - Medium — Gemini "balanced thinking"; Anthropic effort=medium
-//     "moderate, may skip very simple". Aligned.
-//   - High — Gemini "maximizes reasoning depth" (default); Anthropic
-//     effort=high "always thinks, deep reasoning" (default). Aligned.
+//	Anthropic adaptive-capable  ↔  Gemini Pro / Flash      (default: thinking on, high)
+//	Anthropic manual-only       ↔  Gemini Flash-Lite tier  (default: off / minimal)
+//
+// A nil/empty ThinkingConfig therefore picks the natural per-tier default
+// on each provider — adaptive on for the heavyweight tier, off for the
+// lite tier — so the same input config gets equivalent reasoning intensity
+// on either provider without provider-specific tuning by the caller.
 //
 // Mapping order (first matching rule wins):
-//  1. cfg == nil                                       → off (field omitted)
-//  2. ThinkingBudget set                               → manual budget (explicit, bypasses level)
-//  3. ThinkingLevel == Minimal                         → off
-//  4. ThinkingLevel ∈ {Low, Medium, High}, adaptive    → adaptive + effort
-//  5. ThinkingLevel ∈ {Low, Medium, High}, manual-only → manual budget mapped from level
-//  6. IncludeThoughts, adaptive-capable model          → adaptive + high effort
-//  7. IncludeThoughts, manual-only model               → manual budget=10000
-//  8. otherwise                                        → off
+//  1. cfg == nil, adaptive-capable model                    → adaptive (default effort = high)
+//  2. cfg == nil, manual-only model                          → off
+//  3. ThinkingBudget set                                     → manual budget (explicit, bypasses level)
+//  4. ThinkingLevel == Minimal                               → off
+//  5. ThinkingLevel ∈ {Low, Medium, High}, adaptive          → adaptive + effort
+//  6. ThinkingLevel ∈ {Low, Medium, High}, manual-only       → manual budget mapped from level
+//  7. IncludeThoughts, adaptive-capable model                → adaptive + high effort
+//  8. IncludeThoughts, manual-only model                     → manual budget=10000
+//  9. empty cfg (no fields set), adaptive-capable            → adaptive (default effort = high)
+// 10. empty cfg, manual-only                                 → off
 func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model) ThinkingMapping {
+	adaptive := supportsAdaptiveThinking(model)
+
 	if cfg == nil {
+		if adaptive {
+			return ThinkingMapping{Thinking: adaptiveThinking()}
+		}
 		return ThinkingMapping{}
 	}
 	if cfg.ThinkingBudget != nil {
 		return ThinkingMapping{Thinking: anthropic.ThinkingConfigParamOfEnabled(int64(*cfg.ThinkingBudget))}
 	}
-
-	adaptive := supportsAdaptiveThinking(model)
 
 	switch cfg.ThinkingLevel {
 	case genai.ThinkingLevelMinimal:
@@ -445,6 +446,12 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 		return ThinkingMapping{Thinking: anthropic.ThinkingConfigParamOfEnabled(10000)}
 	}
 
+	// Empty cfg (non-nil, no fields set) — same as nil: pick the per-tier
+	// default. Callers who want thinking off on an adaptive-capable model
+	// must say so explicitly via ThinkingLevel: Minimal.
+	if adaptive {
+		return ThinkingMapping{Thinking: adaptiveThinking()}
+	}
 	return ThinkingMapping{}
 }
 
