@@ -456,11 +456,21 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 }
 
 // ThinkingConfigToAnthropicThinking returns just the Thinking parameter, for
-// callers that don't have a model handy and don't care about effort hints.
+// callers that don't have a model handy and don't care about the effort
+// hint. Equivalent to ThinkingConfigToAnthropic(cfg, "").Thinking — empty
+// model means "treat as non-adaptive", so Low/High/IncludeThoughts/explicit
+// ThinkingBudget all keep their v0.1.9 manual-budget mapping.
+//
+// One small behaviour shift vs v0.1.9 worth knowing about: ThinkingLevel:
+// Medium previously fell through v0.1.9's switch (which only enumerated
+// Low and High) and returned thinking disabled. Through this wrapper it
+// now returns enabled with a 5000-token budget, matching the Low/Medium/High
+// gradient the new mapping defines. Callers that want the old "Medium → off"
+// behaviour should pass ThinkingLevel: Minimal explicitly.
+//
 // Deprecated: prefer ThinkingConfigToAnthropic, which is model-aware and
-// returns the effort hint that pairs with adaptive thinking on supported
-// models. This wrapper preserves the v0.1.9 single-arg behaviour by treating
-// the call as model-less (no adaptive auto-selection).
+// also returns the effort hint that pairs with adaptive thinking on
+// supported models.
 func ThinkingConfigToAnthropicThinking(cfg *genai.ThinkingConfig) anthropic.ThinkingConfigParamUnion {
 	return ThinkingConfigToAnthropic(cfg, "").Thinking
 }
