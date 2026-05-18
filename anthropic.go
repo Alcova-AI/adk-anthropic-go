@@ -331,11 +331,26 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 				},
 			}
 		}
+	}
 
-		// Thinking config
-		if req.Config.ThinkingConfig != nil {
-			params.Thinking = converters.ThinkingConfigToAnthropicThinking(req.Config.ThinkingConfig)
-		}
+	// Thinking config — call the converter unconditionally so its
+	// nil-handling actually fires in production. The converter returns
+	// adaptive defaults on adaptive-capable models when ThinkingConfig is
+	// nil; gating this on a nil guard made that path unreachable, and the
+	// PR's "nil config defaults to adaptive on Sonnet 4.6+/Opus 4.6+" claim
+	// silently failed. Two nil shapes reach here:
+	//   - req.Config == nil (no config object at all)
+	//   - req.Config != nil but req.Config.ThinkingConfig == nil
+	// Both should produce model-aware defaults, which ThinkingConfigToAnthropic
+	// already handles when passed a nil pointer.
+	var thinkingCfg *genai.ThinkingConfig
+	if req.Config != nil {
+		thinkingCfg = req.Config.ThinkingConfig
+	}
+	mapping := converters.ThinkingConfigToAnthropic(thinkingCfg, params.Model)
+	params.Thinking = mapping.Thinking
+	if mapping.Effort != "" {
+		params.OutputConfig.Effort = mapping.Effort
 	}
 
 	if m.promptCaching != nil {

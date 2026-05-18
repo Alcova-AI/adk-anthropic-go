@@ -1,5 +1,18 @@
 # Changelog
 
+## [v0.1.16] - Model-aware adaptive thinking + effort mapping
+
+- Upgrade `anthropic-sdk-go` from v1.28.0 to v1.43.0 — picks up `ModelClaudeOpus4_7`, `ModelClaudeMythosPreview`, and `OutputConfigEffortXhigh` constants.
+- New model-aware mapper `ThinkingConfigToAnthropic(cfg, model)` returning `ThinkingMapping{Thinking, Effort}`:
+  - On adaptive-capable models (Sonnet 4.6+, Opus 4.6+, Opus 4.7, Mythos Preview), `ThinkingLevel: Low/Medium/High` maps to **adaptive mode + matching `OutputConfig.Effort`** (low/medium/high) — instead of the old single-budget mapping. `IncludeThoughts: true` similarly maps to adaptive + high effort.
+  - On non-adaptive models (Sonnet 4.5, Haiku 4.5, etc.), the same fields fall back to manual extended thinking (`type: "enabled", budget_tokens: N`), preserving v0.1.9 behaviour.
+  - `nil` or empty `ThinkingConfig` on an adaptive-capable model maps to adaptive mode with Anthropic's default effort (high) — matches the "thinking on by default" behaviour Gemini Pro / Flash give for the equivalent tier. On manual-only Anthropic models it stays off, matching Gemini's Flash-Lite tier default.
+  - `ThinkingLevel: Minimal` maps to "off" — Anthropic has no minimal tier.
+  - Explicit `ThinkingBudget` always wins (manual mode with that exact budget).
+  - Adaptive-capable models matched against the SDK's canonical unversioned constants — bump the SDK and add the constant when Anthropic ships a new adaptive-capable model or dated variant.
+- `anthropic.go` now sets `params.OutputConfig.Effort` from the mapping when adaptive mode is selected.
+- `ThinkingConfigToAnthropicThinking(cfg)` retained as a deprecated thin wrapper for the previous single-arg shape — preserves the manual-budget behaviour for callers that don't have a model handy.
+
 ## [v0.1.15] - Upgrade to ADK Go v1.0.0
 
 - Upgrade `google.golang.org/adk` from v0.6.0 to v1.0.0

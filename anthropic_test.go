@@ -167,6 +167,92 @@ func TestConvertRequest_DirectAPI_SetsOutputConfig(t *testing.T) {
 	}
 }
 
+// TestConvertRequest_DefaultsToAdaptiveOnCapableModel guards against the
+// regression spotted by Cursor Bugbot on PR #22: an earlier draft gated
+// the thinking-config converter behind `if req.Config.ThinkingConfig != nil`,
+// which made the converter's nil-handling path (return adaptive defaults
+// for adaptive-capable models) unreachable from production. Unit tests
+// that called the converter directly still passed, masking the integration
+// gap. These cases lock in the contract that nil ThinkingConfig — whether
+// inside a non-nil Config or via a nil Config entirely — produces adaptive
+// thinking on a model that supports it.
+func TestConvertRequest_DefaultsToAdaptiveOnCapableModel(t *testing.T) {
+	cases := []struct {
+		name string
+		req  *model.LLMRequest
+	}{
+		{
+			name: "nil_thinking_config_inside_non_nil_config",
+			req: &model.LLMRequest{
+				Contents: []*genai.Content{
+					genai.NewContentFromText("Hello", "user"),
+				},
+				Config: &genai.GenerateContentConfig{},
+			},
+		},
+		{
+			name: "nil_config",
+			req: &model.LLMRequest{
+				Contents: []*genai.Content{
+					genai.NewContentFromText("Hello", "user"),
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &anthropicModel{
+				// Adaptive-capable model — unversioned SDK alias.
+				name:             "claude-sonnet-4-6",
+				variant:          VariantAnthropicAPI,
+				defaultMaxTokens: defaultMaxTokens,
+			}
+
+			params, err := m.convertRequest(tc.req)
+			if err != nil {
+				t.Fatalf("convertRequest() error = %v", err)
+			}
+
+			if params.Thinking.OfAdaptive == nil {
+				t.Fatalf("expected adaptive thinking on %s, got Thinking=%+v", m.name, params.Thinking)
+			}
+		})
+	}
+}
+
+// TestConvertRequest_NilConfigLeavesThinkingOffOnNonAdaptive locks in the
+// other half of the contract: on a model that doesn't support adaptive
+// thinking (Haiku, older Sonnet/Opus), nil ThinkingConfig keeps thinking
+// off rather than forcing a manual budget. The fall-through path through
+// the converter must return an empty mapping for non-adaptive models.
+func TestConvertRequest_NilConfigLeavesThinkingOffOnNonAdaptive(t *testing.T) {
+	m := &anthropicModel{
+		// Manual-only model — adaptive is not supported.
+		name:             "claude-haiku-4-5",
+		variant:          VariantAnthropicAPI,
+		defaultMaxTokens: defaultMaxTokens,
+	}
+
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{
+			genai.NewContentFromText("Hello", "user"),
+		},
+	}
+
+	params, err := m.convertRequest(req)
+	if err != nil {
+		t.Fatalf("convertRequest() error = %v", err)
+	}
+
+	if params.Thinking.OfAdaptive != nil {
+		t.Errorf("non-adaptive model %s should not default to adaptive thinking, got OfAdaptive=%+v", m.name, params.Thinking.OfAdaptive)
+	}
+	if params.Thinking.OfEnabled != nil {
+		t.Errorf("non-adaptive model %s should not default to manual thinking budget, got OfEnabled=%+v", m.name, params.Thinking.OfEnabled)
+	}
+}
+
 func TestEmbedSchemaAsSystemPrompt(t *testing.T) {
 	schema := &genai.Schema{
 		Type:     genai.TypeObject,
