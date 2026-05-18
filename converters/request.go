@@ -385,14 +385,29 @@ type ThinkingMapping struct {
 // a token budget — preserving the original v0.1.9 behaviour for models that
 // don't support adaptive.
 //
+// The ThinkingLevel → effort mapping is calibrated to match Gemini 3's
+// own ThinkingLevel semantics so the same config produces equivalent
+// reasoning intensity across providers (per ai.google.dev/gemini-api/docs/thinking
+// and docs.claude.com/en/docs/build-with-claude/adaptive-thinking):
+//
+//   - Minimal — Gemini "no thinking for most queries"; Anthropic "off"
+//     (closest equivalent — Anthropic has no explicit minimal tier).
+//   - Low — Gemini "minimizes latency and cost"; Anthropic effort=low
+//     "minimizes thinking, skips for simple tasks". Aligned.
+//   - Medium — Gemini "balanced thinking"; Anthropic effort=medium
+//     "moderate, may skip very simple". Aligned.
+//   - High — Gemini "maximizes reasoning depth" (default); Anthropic
+//     effort=high "always thinks, deep reasoning" (default). Aligned.
+//
 // Mapping order (first matching rule wins):
 //  1. cfg == nil                                       → off (field omitted)
-//  2. ThinkingBudget set                               → manual budget (explicit)
-//  3. ThinkingLevel ∈ {Low, Medium, High}, adaptive    → adaptive + effort
-//  4. ThinkingLevel ∈ {Low, Medium, High}, manual-only → manual budget mapped from level
-//  5. IncludeThoughts, adaptive-capable model          → adaptive + high effort
-//  6. IncludeThoughts, manual-only model               → manual budget=10000
-//  7. otherwise                                        → off
+//  2. ThinkingBudget set                               → manual budget (explicit, bypasses level)
+//  3. ThinkingLevel == Minimal                         → off
+//  4. ThinkingLevel ∈ {Low, Medium, High}, adaptive    → adaptive + effort
+//  5. ThinkingLevel ∈ {Low, Medium, High}, manual-only → manual budget mapped from level
+//  6. IncludeThoughts, adaptive-capable model          → adaptive + high effort
+//  7. IncludeThoughts, manual-only model               → manual budget=10000
+//  8. otherwise                                        → off
 func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model) ThinkingMapping {
 	if cfg == nil {
 		return ThinkingMapping{}
@@ -404,6 +419,12 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 	adaptive := supportsAdaptiveThinking(model)
 
 	switch cfg.ThinkingLevel {
+	case genai.ThinkingLevelMinimal:
+		// Anthropic has no minimal tier. Gemini's Minimal is "no thinking
+		// for most queries" — closest match on Anthropic is to omit the
+		// thinking field entirely. Callers who want some thinking on
+		// simpler tasks should pass Low instead.
+		return ThinkingMapping{}
 	case genai.ThinkingLevelLow, genai.ThinkingLevelMedium, genai.ThinkingLevelHigh:
 		if adaptive {
 			return ThinkingMapping{

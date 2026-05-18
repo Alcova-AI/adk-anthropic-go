@@ -1062,6 +1062,21 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 			wantBudget: 10000,
 		},
 
+		// Minimal level → off (Anthropic has no minimal tier; matches Gemini's
+		// "no thinking for most queries" intent)
+		{
+			name:    "MINIMAL on adaptive-capable model → off",
+			cfg:     &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMinimal},
+			model:   anthropic.ModelClaudeSonnet4_6,
+			wantNil: true,
+		},
+		{
+			name:    "MINIMAL on non-adaptive model → off",
+			cfg:     &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMinimal},
+			model:   anthropic.ModelClaudeHaiku4_5,
+			wantNil: true,
+		},
+
 		// Nil config → nothing
 		{
 			name:    "nil config returns zero mapping",

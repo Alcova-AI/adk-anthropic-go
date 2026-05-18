@@ -6,8 +6,10 @@
 - New model-aware mapper `ThinkingConfigToAnthropic(cfg, model)` returning `ThinkingMapping{Thinking, Effort}`:
   - On adaptive-capable models (Sonnet 4.6+, Opus 4.6+, Opus 4.7, Mythos Preview), `ThinkingLevel: Low/Medium/High` maps to **adaptive mode + matching `OutputConfig.Effort`** (low/medium/high) — instead of the old single-budget mapping. `IncludeThoughts: true` similarly maps to adaptive + high effort.
   - On non-adaptive models (Sonnet 4.5, Haiku 4.5, etc.), the same fields fall back to manual extended thinking (`type: "enabled", budget_tokens: N`), preserving v0.1.9 behaviour.
+  - `ThinkingLevel: Minimal` maps to "off" on both classes — Anthropic has no minimal tier, and Gemini's docs describe Minimal as "no thinking for most queries", so omitting the field is the closest match.
   - Explicit `ThinkingBudget` always wins (manual mode with that exact budget).
-  - Adaptive-capable model list matched by prefix so versioned variants (e.g. `claude-sonnet-4-6-20251001`) inherit the right behaviour.
+  - The `Low/Medium/High → effort` calibration is chosen to match Gemini 3's own ThinkingLevel semantics, so the same `genai.ThinkingConfig` produces equivalent reasoning intensity across providers.
+  - Adaptive-capable models matched against the SDK's canonical unversioned constants — bump the SDK and add the constant when Anthropic ships a new adaptive-capable model or dated variant.
 - `anthropic.go` now sets `params.OutputConfig.Effort` from the mapping when adaptive mode is selected.
 - `ThinkingConfigToAnthropicThinking(cfg)` retained as a deprecated thin wrapper for the previous single-arg shape — preserves the manual-budget behaviour for callers that don't have a model handy.
 
