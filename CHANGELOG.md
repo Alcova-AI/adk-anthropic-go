@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.1.17] - Drop thinking under forced tool_choice
+
+- Anthropic rejects extended thinking (manual or adaptive) when `tool_choice.type` is `"tool"` or `"any"`. Sent together, the API may either return a 400 or — worse — silently produce a text/thinking response with no `tool_use` block, which looks to callers like the model refused to use the tool.
+- The genai-side shape that lands callers in this trap is easy to write by accident: `ToolConfig.FunctionCallingConfig.Mode = ModeAny` (with or without `AllowedFunctionNames`) maps to forced `tool_choice`, and `ThinkingConfig.ThinkingLevel ∈ {Low, Medium, High}` on adaptive-capable models (Sonnet 4.6+, Opus 4.6+, Mythos Preview) maps to adaptive thinking. Both happily go on the wire.
+- `convertRequest` now drops `params.Thinking` and `params.OutputConfig.Effort` whenever `params.ToolChoice` is forced. The forced `tool_choice` is the load-bearing semantic — the caller has pinned the response shape — so downgrading thinking is the less-surprising of the two corrections.
+- New exported helper `converters.IsForcedToolUse(tc anthropic.ToolChoiceUnionParam) bool` for callers that want the same check.
+
 ## [v0.1.16] - Model-aware adaptive thinking + effort mapping
 
 - Upgrade `anthropic-sdk-go` from v1.28.0 to v1.43.0 — picks up `ModelClaudeOpus4_7`, `ModelClaudeMythosPreview`, and `OutputConfigEffortXhigh` constants.

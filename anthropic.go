@@ -353,6 +353,19 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 		params.OutputConfig.Effort = mapping.Effort
 	}
 
+	// Anthropic rejects extended thinking (manual or adaptive) combined with
+	// forced tool use (tool_choice.type = "tool" or "any"). When both are
+	// requested, the API may either 400 or — worse — silently produce a
+	// text/thinking response with no tool_use block, which looks to callers
+	// like the model just refused to call the tool. The forced tool_choice
+	// is the load-bearing semantic (the caller has pinned the response
+	// shape), so drop the thinking parameter on this side of the wire.
+	// Effort is meaningless without adaptive thinking, so clear it too.
+	if converters.IsForcedToolUse(params.ToolChoice) {
+		params.Thinking = anthropic.ThinkingConfigParamUnion{}
+		params.OutputConfig.Effort = ""
+	}
+
 	if m.promptCaching != nil {
 		applyCacheBreakpoints(&params, m.promptCaching)
 	}
