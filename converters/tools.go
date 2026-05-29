@@ -377,3 +377,14 @@ func ToolConfigToToolChoice(config *genai.ToolConfig) (anthropic.ToolChoiceUnion
 		return anthropic.ToolChoiceUnionParam{}, fmt.Errorf("unexpected tool choice kind: %d", resolved.kind)
 	}
 }
+
+// IsForcedToolUse reports whether the given tool_choice forces the model to
+// emit a tool_use block — i.e. tool_choice.type is "any" or "tool". Auto and
+// the zero value (no tool_choice on the wire) are not forced.
+//
+// Anthropic rejects the combination of forced tool use and extended thinking
+// (both manual and adaptive); callers should drop the thinking parameter when
+// this returns true. See https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview#forced-tool-use-and-extended-thinking
+func IsForcedToolUse(tc anthropic.ToolChoiceUnionParam) bool {
+	return tc.OfAny != nil || tc.OfTool != nil
+}

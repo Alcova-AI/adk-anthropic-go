@@ -253,6 +253,198 @@ func TestConvertRequest_NilConfigLeavesThinkingOffOnNonAdaptive(t *testing.T) {
 	}
 }
 
+// TestConvertRequest_ForcedToolUseDropsThinking locks in the workaround for
+// Anthropic's "forced tool use cannot be combined with extended thinking"
+// constraint. The combination is easy to land into via the genai shape:
+//
+//   - ToolConfig.FunctionCallingConfig.Mode = ModeAny (with or without an
+//     AllowedFunctionNames whitelist) maps to tool_choice.type "any" or "tool".
+//   - ThinkingConfig.ThinkingLevel ∈ {Low, Medium, High} maps to adaptive
+//     thinking on Sonnet 4.6+ / Opus 4.6+ / Mythos.
+//
+// Sent together, Anthropic may ignore tool_choice and reply with text or
+// thinking blocks — which looks to callers like the model refused to use the
+// tool. The converter drops thinking when tool_choice is forced; this test
+// guards that contract for both the specific-tool ("OfTool") and
+// any-tool ("OfAny") shapes, plus the adaptive and manual thinking variants.
+func TestConvertRequest_ForcedToolUseDropsThinking(t *testing.T) {
+	toolDecl := &genai.Tool{
+		FunctionDeclarations: []*genai.FunctionDeclaration{
+			{
+				Name:        "save_thing",
+				Description: "Save a thing.",
+				Parameters: &genai.Schema{
+					Type:     genai.TypeObject,
+					Required: []string{"id"},
+					Properties: map[string]*genai.Schema{
+						"id": {Type: genai.TypeString},
+					},
+				},
+			},
+		},
+	}
+
+	cases := []struct {
+		name       string
+		modelName  string // adaptive-capable vs manual-only
+		toolConfig *genai.ToolConfig
+		thinking   *genai.ThinkingConfig
+	}{
+		{
+			name:      "adaptive_model_specific_tool",
+			modelName: "claude-sonnet-4-6",
+			toolConfig: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode:                 genai.FunctionCallingConfigModeAny,
+					AllowedFunctionNames: []string{"save_thing"},
+				},
+			},
+			thinking: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+		},
+		{
+			name:      "adaptive_model_any_tool",
+			modelName: "claude-sonnet-4-6",
+			toolConfig: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeAny,
+				},
+			},
+			thinking: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+		},
+		{
+			name:      "adaptive_model_nil_thinking_config_defaults_to_adaptive",
+			modelName: "claude-sonnet-4-6",
+			toolConfig: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode:                 genai.FunctionCallingConfigModeAny,
+					AllowedFunctionNames: []string{"save_thing"},
+				},
+			},
+			thinking: nil, // adaptive-capable + nil → adaptive defaults; must still be dropped.
+		},
+		{
+			name:      "manual_model_specific_tool",
+			modelName: "claude-haiku-4-5",
+			toolConfig: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode:                 genai.FunctionCallingConfigModeAny,
+					AllowedFunctionNames: []string{"save_thing"},
+				},
+			},
+			thinking: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+		},
+		{
+			name:      "manual_model_explicit_budget",
+			modelName: "claude-haiku-4-5",
+			toolConfig: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeAny,
+				},
+			},
+			thinking: &genai.ThinkingConfig{ThinkingBudget: ptrInt32(5000)},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &anthropicModel{
+				name:             tc.modelName,
+				variant:          VariantAnthropicAPI,
+				defaultMaxTokens: defaultMaxTokens,
+			}
+
+			req := &model.LLMRequest{
+				Contents: []*genai.Content{
+					genai.NewContentFromText("Hello", "user"),
+				},
+				Config: &genai.GenerateContentConfig{
+					Tools:          []*genai.Tool{toolDecl},
+					ToolConfig:     tc.toolConfig,
+					ThinkingConfig: tc.thinking,
+				},
+			}
+
+			params, err := m.convertRequest(req)
+			if err != nil {
+				t.Fatalf("convertRequest() error = %v", err)
+			}
+
+			if params.Thinking.OfAdaptive != nil || params.Thinking.OfEnabled != nil {
+				t.Errorf("expected Thinking to be cleared under forced tool_choice, got %+v", params.Thinking)
+			}
+			if params.OutputConfig.Effort != "" {
+				t.Errorf("expected OutputConfig.Effort to be cleared, got %q", params.OutputConfig.Effort)
+			}
+			if params.ToolChoice.OfAny == nil && params.ToolChoice.OfTool == nil {
+				t.Errorf("expected forced ToolChoice (OfAny or OfTool) to be preserved, got %+v", params.ToolChoice)
+			}
+		})
+	}
+}
+
+// TestConvertRequest_AutoToolUseKeepsThinking ensures the conflict resolution
+// only fires when tool_choice is genuinely forced. ModeAuto, ModeNone, and no
+// ToolConfig at all must all preserve the thinking parameter that the caller
+// (or the model-aware defaults) selected.
+func TestConvertRequest_AutoToolUseKeepsThinking(t *testing.T) {
+	cases := []struct {
+		name       string
+		toolConfig *genai.ToolConfig
+	}{
+		{
+			name: "auto_mode",
+			toolConfig: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeAuto,
+				},
+			},
+		},
+		{
+			name: "none_mode",
+			toolConfig: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeNone,
+				},
+			},
+		},
+		{
+			name:       "no_tool_config",
+			toolConfig: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &anthropicModel{
+				name:             "claude-sonnet-4-6",
+				variant:          VariantAnthropicAPI,
+				defaultMaxTokens: defaultMaxTokens,
+			}
+
+			req := &model.LLMRequest{
+				Contents: []*genai.Content{
+					genai.NewContentFromText("Hello", "user"),
+				},
+				Config: &genai.GenerateContentConfig{
+					ToolConfig:     tc.toolConfig,
+					ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+				},
+			}
+
+			params, err := m.convertRequest(req)
+			if err != nil {
+				t.Fatalf("convertRequest() error = %v", err)
+			}
+
+			if params.Thinking.OfAdaptive == nil {
+				t.Errorf("expected adaptive thinking to be preserved when tool_choice is not forced, got %+v", params.Thinking)
+			}
+		})
+	}
+}
+
+func ptrInt32(v int32) *int32 { return &v }
+
 func TestEmbedSchemaAsSystemPrompt(t *testing.T) {
 	schema := &genai.Schema{
 		Type:     genai.TypeObject,
