@@ -132,6 +132,78 @@ func TestConvertRequest_VertexAI_SetsOutputConfig(t *testing.T) {
 	}
 }
 
+func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse(t *testing.T) {
+	m := &anthropicModel{
+		name:             "claude-haiku-4-5-20251001",
+		variant:          VariantVertexAI,
+		defaultMaxTokens: defaultMaxTokens,
+	}
+
+	// Top-level object, a nested object property, and an array of objects —
+	// every object node must get additionalProperties:false.
+	schema := &genai.Schema{
+		Type:     genai.TypeObject,
+		Required: []string{"person"},
+		Properties: map[string]*genai.Schema{
+			"person": {
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"name": {Type: genai.TypeString},
+				},
+			},
+			"tags": {
+				Type: genai.TypeArray,
+				Items: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"label": {Type: genai.TypeString},
+					},
+				},
+			},
+		},
+	}
+
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
+		Config:   &genai.GenerateContentConfig{ResponseSchema: schema},
+	}
+
+	params, err := m.convertRequest(req)
+	if err != nil {
+		t.Fatalf("convertRequest() error = %v", err)
+	}
+
+	root := params.OutputConfig.Format.Schema
+	if root == nil {
+		t.Fatal("expected OutputConfig schema to be set")
+	}
+
+	assertAdditionalPropertiesFalse(t, root, "root")
+
+	props, _ := root["properties"].(map[string]any)
+	person, _ := props["person"].(map[string]any)
+	assertAdditionalPropertiesFalse(t, person, "person")
+
+	tags, _ := props["tags"].(map[string]any)
+	items, _ := tags["items"].(map[string]any)
+	assertAdditionalPropertiesFalse(t, items, "tags.items")
+}
+
+func assertAdditionalPropertiesFalse(t *testing.T, schema map[string]any, label string) {
+	t.Helper()
+	if schema == nil {
+		t.Fatalf("%s: schema missing", label)
+	}
+	v, ok := schema["additionalProperties"]
+	if !ok {
+		t.Errorf("%s: additionalProperties not set (Anthropic structured outputs require it to be false)", label)
+		return
+	}
+	if b, isBool := v.(bool); !isBool || b {
+		t.Errorf("%s: additionalProperties = %v, want false", label, v)
+	}
+}
+
 func TestConvertRequest_DirectAPI_SetsOutputConfig(t *testing.T) {
 	m := &anthropicModel{
 		name:             "claude-haiku-4-5-20251001",
