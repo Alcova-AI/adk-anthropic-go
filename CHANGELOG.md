@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.1.18] - GA structured outputs on Vertex AI
+
+- Anthropic structured outputs are now GA on Vertex AI (`output_config.format` with a `json_schema`, no beta header), so `convertRequest` sends the real `OutputConfig` schema on the Vertex path — the same GA path the direct API already uses.
+- Removed the prompt-based JSON fallback (`generateWithPromptBasedJSON`, `embedSchemaAsSystemPrompt`, `stripMarkdownFromResponse` and its fence regexes). It embedded the schema in the system prompt and stripped markdown fences from the reply — a workaround that masked regressions and could leave preamble or fenced JSON to crash downstream parsing.
+- GA structured outputs on Vertex are gated by the org policy `constraints/vertexai.allowedPartnerModelFeatures`, enabled separately. If it isn't enabled, Vertex returns an error rather than silently degrading.
+
 ## [v0.1.17] - Drop thinking under forced tool_choice
 
 - Anthropic rejects extended thinking (manual or adaptive) when `tool_choice.type` is `"tool"` or `"any"`. Sent together, the API may either return a 400 or — worse — silently produce a text/thinking response with no `tool_use` block, which looks to callers like the model refused to use the tool.
