@@ -2,7 +2,7 @@
 
 ## [v0.1.18] - GA structured outputs on Vertex AI
 
-- Anthropic structured outputs are now GA on Vertex AI (`output_config.format` with a `json_schema`, no beta header), so `convertRequest` sends the real `OutputConfig` schema on the Vertex path — the same GA path the direct API already uses.
+- Anthropic structured outputs are now GA on Vertex AI (`output_config.format` with a `json_schema`, no beta header), so `convertRequest` sends the real `OutputConfig` schema on the Vertex path — the same GA path the direct API already uses. Object schemas are emitted with `additionalProperties: false` on every node, which Anthropic structured outputs require.
 - Removed the prompt-based JSON fallback (`generateWithPromptBasedJSON`, `embedSchemaAsSystemPrompt`, `stripMarkdownFromResponse` and its fence regexes). It embedded the schema in the system prompt and stripped markdown fences from the reply — a workaround that masked regressions and could leave preamble or fenced JSON to crash downstream parsing.
 - GA structured outputs on Vertex are gated by the org policy `constraints/vertexai.allowedPartnerModelFeatures`, enabled separately. If it isn't enabled, Vertex returns an error rather than silently degrading.
 
