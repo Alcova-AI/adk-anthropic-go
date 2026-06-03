@@ -402,10 +402,13 @@ type ThinkingMapping struct {
 //  4. ThinkingLevel == Minimal                               → off
 //  5. ThinkingLevel ∈ {Low, Medium, High}, adaptive          → adaptive + effort
 //  6. ThinkingLevel ∈ {Low, Medium, High}, manual-only       → manual budget mapped from level
-//  7. IncludeThoughts, adaptive-capable model                → adaptive + high effort
-//  8. IncludeThoughts, manual-only model                     → manual budget=10000
-//  9. empty cfg (no fields set), adaptive-capable            → adaptive (default effort = high)
-// 10. empty cfg, manual-only                                 → off
+//  7. empty cfg (no fields set), adaptive-capable            → adaptive (default effort = high)
+//  8. empty cfg, manual-only                                 → off
+//
+// IncludeThoughts is ignored: in genai it governs whether thought summaries
+// are returned, not whether the model thinks, and Anthropic returns thinking
+// blocks whenever thinking is on regardless. Thinking is driven solely by
+// ThinkingBudget / ThinkingLevel and the per-tier default.
 func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model) ThinkingMapping {
 	adaptive := supportsAdaptiveThinking(model)
 
@@ -436,19 +439,11 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 		return ThinkingMapping{Thinking: anthropic.ThinkingConfigParamOfEnabled(levelToBudget(cfg.ThinkingLevel))}
 	}
 
-	if cfg.IncludeThoughts {
-		if adaptive {
-			return ThinkingMapping{
-				Thinking: adaptiveThinking(),
-				Effort:   anthropic.OutputConfigEffortHigh,
-			}
-		}
-		return ThinkingMapping{Thinking: anthropic.ThinkingConfigParamOfEnabled(10000)}
-	}
-
-	// Empty cfg (non-nil, no fields set) — same as nil: pick the per-tier
-	// default. Callers who want thinking off on an adaptive-capable model
-	// must say so explicitly via ThinkingLevel: Minimal.
+	// IncludeThoughts is intentionally ignored — see the doc comment above.
+	//
+	// Empty cfg (no fields set, or only IncludeThoughts) — same as nil: pick
+	// the per-tier default. Callers who want thinking off on an adaptive-capable
+	// model must say so explicitly via ThinkingLevel: Minimal.
 	if adaptive {
 		return ThinkingMapping{Thinking: adaptiveThinking()}
 	}
@@ -458,8 +453,8 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 // ThinkingConfigToAnthropicThinking returns just the Thinking parameter, for
 // callers that don't have a model handy and don't care about the effort
 // hint. Equivalent to ThinkingConfigToAnthropic(cfg, "").Thinking — empty
-// model means "treat as non-adaptive", so Low/High/IncludeThoughts/explicit
-// ThinkingBudget all keep their v0.1.9 manual-budget mapping.
+// model means "treat as non-adaptive", so Low/High/explicit ThinkingBudget
+// keep their v0.1.9 manual-budget mapping (IncludeThoughts is ignored).
 //
 // One small behaviour shift vs v0.1.9 worth knowing about: ThinkingLevel:
 // Medium previously fell through v0.1.9's switch (which only enumerated
