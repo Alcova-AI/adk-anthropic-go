@@ -350,6 +350,11 @@ func enforceStrictObjectSchema(node any) {
 		for _, v := range n {
 			enforceStrictObjectSchema(v)
 		}
+	case []map[string]any:
+		// SchemaToMap stores anyOf branches as []map[string]any, not []any.
+		for _, v := range n {
+			enforceStrictObjectSchema(v)
+		}
 	case []any:
 		for _, v := range n {
 			enforceStrictObjectSchema(v)

@@ -204,6 +204,55 @@ func assertAdditionalPropertiesFalse(t *testing.T, schema map[string]any, label 
 	}
 }
 
+func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse_AnyOf(t *testing.T) {
+	m := &anthropicModel{
+		name:             "claude-haiku-4-5-20251001",
+		variant:          VariantVertexAI,
+		defaultMaxTokens: defaultMaxTokens,
+	}
+
+	// An object branch inside anyOf. SchemaToMap stores anyOf as
+	// []map[string]any, so the enforcement walk must recurse into it.
+	schema := &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"choice": {
+				AnyOf: []*genai.Schema{
+					{
+						Type:       genai.TypeObject,
+						Properties: map[string]*genai.Schema{"name": {Type: genai.TypeString}},
+					},
+					{Type: genai.TypeString},
+				},
+			},
+		},
+	}
+
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
+		Config:   &genai.GenerateContentConfig{ResponseSchema: schema},
+	}
+
+	params, err := m.convertRequest(req)
+	if err != nil {
+		t.Fatalf("convertRequest() error = %v", err)
+	}
+
+	root := params.OutputConfig.Format.Schema
+	if root == nil {
+		t.Fatal("expected OutputConfig schema to be set")
+	}
+
+	props, _ := root["properties"].(map[string]any)
+	choice, _ := props["choice"].(map[string]any)
+	anyOf, ok := choice["anyOf"].([]map[string]any)
+	if !ok {
+		t.Fatalf("choice.anyOf: want []map[string]any, got %T", choice["anyOf"])
+	}
+	// The object branch under anyOf must get additionalProperties:false.
+	assertAdditionalPropertiesFalse(t, anyOf[0], "choice.anyOf[0]")
+}
+
 func TestConvertRequest_DirectAPI_SetsOutputConfig(t *testing.T) {
 	m := &anthropicModel{
 		name:             "claude-haiku-4-5-20251001",
