@@ -923,9 +923,9 @@ func TestThinkingConfigToAnthropicThinking(t *testing.T) {
 			wantBudget: 8000,
 		},
 		{
-			name:       "IncludeThoughts alone",
-			cfg:        &genai.ThinkingConfig{IncludeThoughts: true},
-			wantBudget: 10000,
+			name:    "IncludeThoughts alone is ignored",
+			cfg:     &genai.ThinkingConfig{IncludeThoughts: true},
+			wantNil: true,
 		},
 		{
 			name:    "unspecified level no budget no include",
@@ -1031,19 +1031,18 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 			wantBudget: 1024,
 		},
 
-		// IncludeThoughts behaves per model class
+		// IncludeThoughts is ignored — it's an output-visibility flag, not a thinking toggle
 		{
-			name:         "IncludeThoughts on Sonnet 4.6 → adaptive + high effort",
+			name:         "IncludeThoughts ignored on Sonnet 4.6 → adaptive default, no effort",
 			cfg:          &genai.ThinkingConfig{IncludeThoughts: true},
 			model:        anthropic.ModelClaudeSonnet4_6,
 			wantAdaptive: true,
-			wantEffort:   anthropic.OutputConfigEffortHigh,
 		},
 		{
-			name:       "IncludeThoughts on Haiku 4.5 → manual budget 10000",
-			cfg:        &genai.ThinkingConfig{IncludeThoughts: true},
-			model:      anthropic.ModelClaudeHaiku4_5,
-			wantBudget: 10000,
+			name:    "IncludeThoughts ignored on Haiku 4.5 → off",
+			cfg:     &genai.ThinkingConfig{IncludeThoughts: true},
+			model:   anthropic.ModelClaudeHaiku4_5,
+			wantNil: true,
 		},
 
 		// Explicit overrides remain authoritative
@@ -1251,51 +1250,6 @@ func TestToolConfigToToolChoice(t *testing.T) {
 				}
 				if result.OfTool.Name != tt.wantTool {
 					t.Errorf("OfTool.Name = %q, want %q", result.OfTool.Name, tt.wantTool)
-				}
-			}
-		})
-	}
-}
-
-func TestSchemaToJSONString(t *testing.T) {
-	tests := []struct {
-		name     string
-		schema   *genai.Schema
-		contains []string
-	}{
-		{
-			name:     "nil_schema",
-			schema:   nil,
-			contains: []string{"null"},
-		},
-		{
-			name: "simple_object",
-			schema: &genai.Schema{
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"name": {Type: genai.TypeString},
-				},
-				Required: []string{"name"},
-			},
-			contains: []string{`"type": "object"`, `"properties"`, `"name"`, `"required"`},
-		},
-		{
-			name: "with_description",
-			schema: &genai.Schema{
-				Type:        genai.TypeString,
-				Description: "A user name",
-			},
-			contains: []string{`"type": "string"`, `"description": "A user name"`},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := converters.SchemaToJSONString(tt.schema)
-
-			for _, want := range tt.contains {
-				if !strings.Contains(result, want) {
-					t.Errorf("SchemaToJSONString() = %q, want to contain %q", result, want)
 				}
 			}
 		})

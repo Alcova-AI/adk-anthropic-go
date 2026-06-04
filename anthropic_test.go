@@ -15,7 +15,6 @@
 package adkanthropic
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -98,7 +97,7 @@ func TestNewModel_VertexAI_MissingConfig(t *testing.T) {
 	}
 }
 
-func TestConvertRequest_VertexAI_SkipsOutputConfig(t *testing.T) {
+func TestConvertRequest_VertexAI_SetsOutputConfig(t *testing.T) {
 	m := &anthropicModel{
 		name:             "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
@@ -127,10 +126,131 @@ func TestConvertRequest_VertexAI_SkipsOutputConfig(t *testing.T) {
 		t.Fatalf("convertRequest() error = %v", err)
 	}
 
-	// OutputConfig must not be set for Vertex AI
-	if params.OutputConfig.Format.Schema != nil {
-		t.Error("expected OutputConfig to be empty for Vertex AI, but it was set")
+	// Structured outputs are GA on Vertex AI, so OutputConfig must be set.
+	if params.OutputConfig.Format.Schema == nil {
+		t.Error("expected OutputConfig to be set for Vertex AI, but it was empty")
 	}
+}
+
+func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse(t *testing.T) {
+	m := &anthropicModel{
+		name:             "claude-haiku-4-5-20251001",
+		variant:          VariantVertexAI,
+		defaultMaxTokens: defaultMaxTokens,
+	}
+
+	// Top-level object, a nested object property, and an array of objects —
+	// every object node must get additionalProperties:false.
+	schema := &genai.Schema{
+		Type:     genai.TypeObject,
+		Required: []string{"person"},
+		Properties: map[string]*genai.Schema{
+			"person": {
+				Type: genai.TypeObject,
+				Properties: map[string]*genai.Schema{
+					"name": {Type: genai.TypeString},
+				},
+			},
+			"tags": {
+				Type: genai.TypeArray,
+				Items: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"label": {Type: genai.TypeString},
+					},
+				},
+			},
+		},
+	}
+
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
+		Config:   &genai.GenerateContentConfig{ResponseSchema: schema},
+	}
+
+	params, err := m.convertRequest(req)
+	if err != nil {
+		t.Fatalf("convertRequest() error = %v", err)
+	}
+
+	root := params.OutputConfig.Format.Schema
+	if root == nil {
+		t.Fatal("expected OutputConfig schema to be set")
+	}
+
+	assertAdditionalPropertiesFalse(t, root, "root")
+
+	props, _ := root["properties"].(map[string]any)
+	person, _ := props["person"].(map[string]any)
+	assertAdditionalPropertiesFalse(t, person, "person")
+
+	tags, _ := props["tags"].(map[string]any)
+	items, _ := tags["items"].(map[string]any)
+	assertAdditionalPropertiesFalse(t, items, "tags.items")
+}
+
+func assertAdditionalPropertiesFalse(t *testing.T, schema map[string]any, label string) {
+	t.Helper()
+	if schema == nil {
+		t.Fatalf("%s: schema missing", label)
+	}
+	v, ok := schema["additionalProperties"]
+	if !ok {
+		t.Errorf("%s: additionalProperties not set (Anthropic structured outputs require it to be false)", label)
+		return
+	}
+	if b, isBool := v.(bool); !isBool || b {
+		t.Errorf("%s: additionalProperties = %v, want false", label, v)
+	}
+}
+
+func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse_AnyOf(t *testing.T) {
+	m := &anthropicModel{
+		name:             "claude-haiku-4-5-20251001",
+		variant:          VariantVertexAI,
+		defaultMaxTokens: defaultMaxTokens,
+	}
+
+	// An object branch inside anyOf. SchemaToMap stores anyOf as
+	// []map[string]any, so the enforcement walk must recurse into it.
+	schema := &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"choice": {
+				AnyOf: []*genai.Schema{
+					{
+						Type:       genai.TypeObject,
+						Properties: map[string]*genai.Schema{"name": {Type: genai.TypeString}},
+					},
+					{Type: genai.TypeString},
+				},
+			},
+		},
+	}
+
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
+		Config:   &genai.GenerateContentConfig{ResponseSchema: schema},
+	}
+
+	params, err := m.convertRequest(req)
+	if err != nil {
+		t.Fatalf("convertRequest() error = %v", err)
+	}
+
+	root := params.OutputConfig.Format.Schema
+	if root == nil {
+		t.Fatal("expected OutputConfig schema to be set")
+	}
+
+	props, _ := root["properties"].(map[string]any)
+	choice, _ := props["choice"].(map[string]any)
+	anyOf, ok := choice["anyOf"].([]map[string]any)
+	if !ok {
+		t.Fatalf("choice.anyOf: want []map[string]any, got %T", choice["anyOf"])
+	}
+	// The object branch under anyOf must get additionalProperties:false.
+	assertAdditionalPropertiesFalse(t, anyOf[0], "choice.anyOf[0]")
 }
 
 func TestConvertRequest_DirectAPI_SetsOutputConfig(t *testing.T) {
@@ -444,122 +564,3 @@ func TestConvertRequest_AutoToolUseKeepsThinking(t *testing.T) {
 }
 
 func ptrInt32(v int32) *int32 { return &v }
-
-func TestEmbedSchemaAsSystemPrompt(t *testing.T) {
-	schema := &genai.Schema{
-		Type:     genai.TypeObject,
-		Required: []string{"name"},
-		Properties: map[string]*genai.Schema{
-			"name": {Type: genai.TypeString},
-		},
-	}
-
-	t.Run("no_existing_system_instruction", func(t *testing.T) {
-		req := &model.LLMRequest{
-			Contents: []*genai.Content{
-				genai.NewContentFromText("Hello", "user"),
-			},
-			Config: &genai.GenerateContentConfig{
-				ResponseSchema: schema,
-			},
-		}
-
-		modified := embedSchemaAsSystemPrompt(req)
-
-		// ResponseSchema should be cleared
-		if modified.Config.ResponseSchema != nil {
-			t.Error("expected ResponseSchema to be nil in modified request")
-		}
-
-		// Original request should be unchanged
-		if req.Config.ResponseSchema == nil {
-			t.Error("expected original request ResponseSchema to be unchanged")
-		}
-
-		// System instruction should contain the schema
-		if modified.Config.SystemInstruction == nil {
-			t.Fatal("expected SystemInstruction to be set")
-		}
-		text := modified.Config.SystemInstruction.Parts[0].Text
-		if !strings.Contains(text, "JSON schema") {
-			t.Errorf("expected system instruction to contain schema, got: %s", text)
-		}
-	})
-
-	t.Run("with_existing_system_instruction", func(t *testing.T) {
-		req := &model.LLMRequest{
-			Contents: []*genai.Content{
-				genai.NewContentFromText("Hello", "user"),
-			},
-			Config: &genai.GenerateContentConfig{
-				SystemInstruction: &genai.Content{
-					Parts: []*genai.Part{{Text: "You are a helpful assistant."}},
-				},
-				ResponseSchema: schema,
-			},
-		}
-
-		modified := embedSchemaAsSystemPrompt(req)
-
-		text := modified.Config.SystemInstruction.Parts[0].Text
-		if !strings.Contains(text, "You are a helpful assistant.") {
-			t.Error("expected original system instruction to be preserved")
-		}
-		if !strings.Contains(text, "JSON schema") {
-			t.Error("expected schema instruction to be appended")
-		}
-	})
-}
-
-func TestStripMarkdownFromResponse(t *testing.T) {
-	tests := []struct {
-		name     string
-		text     string
-		wantText string
-	}{
-		{
-			name:     "no_fences",
-			text:     `{"name": "test"}`,
-			wantText: `{"name": "test"}`,
-		},
-		{
-			name:     "json_fence",
-			text:     "```json\n{\"name\": \"test\"}\n```",
-			wantText: `{"name": "test"}`,
-		},
-		{
-			name:     "plain_fence",
-			text:     "```\n{\"name\": \"test\"}\n```",
-			wantText: `{"name": "test"}`,
-		},
-		{
-			name:     "fence_with_preamble",
-			text:     "Here is the result:\n```json\n{\"name\": \"test\"}\n```",
-			wantText: `{"name": "test"}`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp := &model.LLMResponse{
-				Content: &genai.Content{
-					Parts: []*genai.Part{{Text: tt.text}},
-				},
-			}
-
-			stripMarkdownFromResponse(context.Background(), resp)
-
-			got := resp.Content.Parts[0].Text
-			if got != tt.wantText {
-				t.Errorf("stripMarkdownFromResponse() text = %q, want %q", got, tt.wantText)
-			}
-		})
-	}
-}
-
-func TestStripMarkdownFromResponse_NilSafety(t *testing.T) {
-	// Should not panic on nil inputs
-	stripMarkdownFromResponse(context.Background(), nil)
-	stripMarkdownFromResponse(context.Background(), &model.LLMResponse{})
-	stripMarkdownFromResponse(context.Background(), &model.LLMResponse{Content: &genai.Content{}})
-}

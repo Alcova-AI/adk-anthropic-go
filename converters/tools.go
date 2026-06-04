@@ -15,7 +15,6 @@
 package converters
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -271,17 +270,6 @@ func SchemaToMap(schema *genai.Schema) map[string]any {
 	}
 
 	return result
-}
-
-// SchemaToJSONString converts a genai.Schema to a pretty-printed JSON string.
-// Used for prompt-based JSON output fallback on Vertex AI.
-func SchemaToJSONString(schema *genai.Schema) string {
-	m := SchemaToMap(schema)
-	b, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return "{}"
-	}
-	return string(b)
 }
 
 // toolChoiceKind represents the resolved tool choice type.
