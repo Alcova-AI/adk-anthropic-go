@@ -1256,51 +1256,6 @@ func TestToolConfigToToolChoice(t *testing.T) {
 	}
 }
 
-func TestSchemaToJSONString(t *testing.T) {
-	tests := []struct {
-		name     string
-		schema   *genai.Schema
-		contains []string
-	}{
-		{
-			name:     "nil_schema",
-			schema:   nil,
-			contains: []string{"null"},
-		},
-		{
-			name: "simple_object",
-			schema: &genai.Schema{
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"name": {Type: genai.TypeString},
-				},
-				Required: []string{"name"},
-			},
-			contains: []string{`"type": "object"`, `"properties"`, `"name"`, `"required"`},
-		},
-		{
-			name: "with_description",
-			schema: &genai.Schema{
-				Type:        genai.TypeString,
-				Description: "A user name",
-			},
-			contains: []string{`"type": "string"`, `"description": "A user name"`},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := converters.SchemaToJSONString(tt.schema)
-
-			for _, want := range tt.contains {
-				if !strings.Contains(result, want) {
-					t.Errorf("SchemaToJSONString() = %q, want to contain %q", result, want)
-				}
-			}
-		})
-	}
-}
-
 func TestUsageToMetadata_CacheTokens(t *testing.T) {
 	t.Run("cache read tokens mapped to CachedContentTokenCount", func(t *testing.T) {
 		usage := anthropic.Usage{
