@@ -57,6 +57,7 @@ func MessageToLLMResponse(msg *anthropic.Message) (*model.LLMResponse, error) {
 		Content:       content,
 		UsageMetadata: UsageToMetadata(msg.Usage),
 		FinishReason:  StopReasonToFinishReason(msg.StopReason),
+		ModelVersion:  string(msg.Model),
 	}
 
 	if len(allCitations) > 0 {

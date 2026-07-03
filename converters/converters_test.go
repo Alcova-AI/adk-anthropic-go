@@ -827,6 +827,29 @@ func TestMessageToLLMResponse_WithCitations(t *testing.T) {
 	}
 }
 
+func TestMessageToLLMResponse_SetsModelVersion(t *testing.T) {
+	msgJSON := `{
+		"model": "claude-sonnet-4-5-20250929",
+		"content": [{"type": "text", "text": "Hello"}],
+		"stop_reason": "end_turn",
+		"usage": {"input_tokens": 10, "output_tokens": 20}
+	}`
+
+	var msg anthropic.Message
+	if err := msg.UnmarshalJSON([]byte(msgJSON)); err != nil {
+		t.Fatalf("failed to unmarshal message: %v", err)
+	}
+
+	resp, err := converters.MessageToLLMResponse(&msg)
+	if err != nil {
+		t.Fatalf("MessageToLLMResponse() error = %v", err)
+	}
+
+	if resp.ModelVersion != "claude-sonnet-4-5-20250929" {
+		t.Errorf("ModelVersion = %q, want %q", resp.ModelVersion, "claude-sonnet-4-5-20250929")
+	}
+}
+
 func TestContentBlockToGenaiPart_WebSearchToolResult(t *testing.T) {
 	blockJSON := `{
 		"type": "web_search_tool_result",
