@@ -20,14 +20,14 @@
 //
 // # Installation
 //
-//	go get github.com/Alcova-AI/adk-anthropic-go
+//	go get github.com/Alcova-AI/adk-anthropic-go/v2
 //
 // # Basic Usage
 //
 // To use the direct Anthropic API:
 //
 //	import (
-//		adkanthropic "github.com/Alcova-AI/adk-anthropic-go"
+//		adkanthropic "github.com/Alcova-AI/adk-anthropic-go/v2"
 //		"github.com/anthropics/anthropic-sdk-go"
 //	)
 //
