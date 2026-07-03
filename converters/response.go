@@ -22,7 +22,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"google.golang.org/genai"
 
-	"google.golang.org/adk/model"
+	"google.golang.org/adk/v2/model"
 )
 
 // MessageToLLMResponse converts an Anthropic Message to a model.LLMResponse.

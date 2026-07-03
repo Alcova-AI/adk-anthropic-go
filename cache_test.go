@@ -20,7 +20,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"google.golang.org/genai"
 
-	"github.com/Alcova-AI/adk-anthropic-go/converters"
+	"github.com/Alcova-AI/adk-anthropic-go/v2/converters"
 )
 
 func makeSystemParams(t *testing.T, text string) []anthropic.TextBlockParam {

@@ -25,8 +25,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/vertex"
 	"google.golang.org/genai"
 
-	"github.com/Alcova-AI/adk-anthropic-go/converters"
-	"google.golang.org/adk/model"
+	"github.com/Alcova-AI/adk-anthropic-go/v2/converters"
+	"google.golang.org/adk/v2/model"
 )
 
 const defaultMaxTokens = 16384

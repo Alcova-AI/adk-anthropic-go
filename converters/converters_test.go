@@ -23,7 +23,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/genai"
 
-	"github.com/Alcova-AI/adk-anthropic-go/converters"
+	"github.com/Alcova-AI/adk-anthropic-go/v2/converters"
 )
 
 func TestContentsToMessages_SimpleText(t *testing.T) {
