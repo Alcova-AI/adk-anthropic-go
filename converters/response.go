@@ -22,7 +22,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"google.golang.org/genai"
 
-	"google.golang.org/adk/model"
+	"google.golang.org/adk/v2/model"
 )
 
 // MessageToLLMResponse converts an Anthropic Message to a model.LLMResponse.
@@ -57,6 +57,7 @@ func MessageToLLMResponse(msg *anthropic.Message) (*model.LLMResponse, error) {
 		Content:       content,
 		UsageMetadata: UsageToMetadata(msg.Usage),
 		FinishReason:  StopReasonToFinishReason(msg.StopReason),
+		ModelVersion:  string(msg.Model),
 	}
 
 	if len(allCitations) > 0 {
@@ -255,4 +256,3 @@ func StreamThinkingDeltaToPartialResponse(thinking string) *model.LLMResponse {
 		Partial: true,
 	}
 }
-

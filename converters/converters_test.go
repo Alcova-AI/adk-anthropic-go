@@ -23,7 +23,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/genai"
 
-	"github.com/Alcova-AI/adk-anthropic-go/converters"
+	"github.com/Alcova-AI/adk-anthropic-go/v2/converters"
 )
 
 func TestContentsToMessages_SimpleText(t *testing.T) {
@@ -827,6 +827,29 @@ func TestMessageToLLMResponse_WithCitations(t *testing.T) {
 	}
 }
 
+func TestMessageToLLMResponse_SetsModelVersion(t *testing.T) {
+	msgJSON := `{
+		"model": "claude-sonnet-4-5-20250929",
+		"content": [{"type": "text", "text": "Hello"}],
+		"stop_reason": "end_turn",
+		"usage": {"input_tokens": 10, "output_tokens": 20}
+	}`
+
+	var msg anthropic.Message
+	if err := msg.UnmarshalJSON([]byte(msgJSON)); err != nil {
+		t.Fatalf("failed to unmarshal message: %v", err)
+	}
+
+	resp, err := converters.MessageToLLMResponse(&msg)
+	if err != nil {
+		t.Fatalf("MessageToLLMResponse() error = %v", err)
+	}
+
+	if resp.ModelVersion != "claude-sonnet-4-5-20250929" {
+		t.Errorf("ModelVersion = %q, want %q", resp.ModelVersion, "claude-sonnet-4-5-20250929")
+	}
+}
+
 func TestContentBlockToGenaiPart_WebSearchToolResult(t *testing.T) {
 	blockJSON := `{
 		"type": "web_search_tool_result",
@@ -1279,10 +1302,10 @@ func TestUsageToMetadata_CacheTokens(t *testing.T) {
 
 	t.Run("PromptTokenCount includes cached and uncached tokens", func(t *testing.T) {
 		usage := anthropic.Usage{
-			InputTokens:               100,
-			OutputTokens:              50,
-			CacheReadInputTokens:      80,
-			CacheCreationInputTokens:  20,
+			InputTokens:              100,
+			OutputTokens:             50,
+			CacheReadInputTokens:     80,
+			CacheCreationInputTokens: 20,
 		}
 		got := converters.UsageToMetadata(usage)
 		// PromptTokenCount = InputTokens + CacheReadInputTokens + CacheCreationInputTokens

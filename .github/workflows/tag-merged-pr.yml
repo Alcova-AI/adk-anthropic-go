@@ -7,6 +7,9 @@ on:
       - reopened
       - synchronize
       - closed
+    branches:
+      - main
+      - v1
 
 permissions:
   contents: write
@@ -15,6 +18,8 @@ jobs:
   preview-pr-tag:
     if: github.event.pull_request.merged != true
     runs-on: ubuntu-latest
+    env:
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,6 +48,8 @@ jobs:
   tag-merged-pr:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    env:
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -91,16 +98,18 @@ jobs:
           NEXT_VERSION: ${{ steps.next-version.outputs.version }}
         run: |
           tag_name="v${NEXT_VERSION}"
+          major=$(echo "$tag_name" | sed -E 's/^v([0-9]+)\..*/\1/')
 
-          # Find the previous tag
-          prev_tag=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -2 | tail -1)
+          # Find the previous tag within the same major-version line
+          # (excluding the tag we just created for this release).
+          prev_tag=$(git tag --sort=-version:refname | grep -E "^v${major}\.[0-9]+\.[0-9]+$" | grep -v "^${tag_name}$" | head -1)
 
           # Generate changelog
           if [ -n "$prev_tag" ]; then
             echo "Generating changelog from ${prev_tag} to ${tag_name}"
             changelog=$(git log ${prev_tag}..${tag_name} --pretty=format:"- %s (%h)" --no-merges)
           else
-            echo "No previous tag found, using all commits"
+            echo "No previous tag found in the v${major} line, using all commits"
             changelog=$(git log ${tag_name} --pretty=format:"- %s (%h)" --no-merges)
           fi
 
@@ -127,8 +136,17 @@ jobs:
           **Full Changelog**: https://github.com/${{ github.repository }}/commits/${tag_name}
           EOF
 
+          # Mark releases on maintenance branches (e.g. v1) as not "latest",
+          # so a v1.x.x patch release doesn't override the v2.x.x "Latest"
+          # badge on GitHub.
+          latest_flag="--latest"
+          if [[ "$BASE_REF" =~ ^v[0-9]+$ ]]; then
+            latest_flag="--latest=false"
+          fi
+
           # Create the release
           gh release create "${tag_name}" \
             --title "${tag_name}" \
             --notes-file /tmp/release-notes.md \
-            --repo ${{ github.repository }}
+            --repo ${{ github.repository }} \
+            $latest_flag
