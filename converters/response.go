@@ -256,4 +256,3 @@ func StreamThinkingDeltaToPartialResponse(thinking string) *model.LLMResponse {
 		Partial: true,
 	}
 }
-

@@ -1302,10 +1302,10 @@ func TestUsageToMetadata_CacheTokens(t *testing.T) {
 
 	t.Run("PromptTokenCount includes cached and uncached tokens", func(t *testing.T) {
 		usage := anthropic.Usage{
-			InputTokens:               100,
-			OutputTokens:              50,
-			CacheReadInputTokens:      80,
-			CacheCreationInputTokens:  20,
+			InputTokens:              100,
+			OutputTokens:             50,
+			CacheReadInputTokens:     80,
+			CacheCreationInputTokens: 20,
 		}
 		got := converters.UsageToMetadata(usage)
 		// PromptTokenCount = InputTokens + CacheReadInputTokens + CacheCreationInputTokens
