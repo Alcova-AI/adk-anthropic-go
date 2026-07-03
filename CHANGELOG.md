@@ -1,5 +1,13 @@
 # Changelog
 
+## [v2.0.0] - Migrate to adk-go v2
+
+- Upgrade `google.golang.org/adk` to `google.golang.org/adk/v2` v2.0.0 — module path changes to `github.com/Alcova-AI/adk-anthropic-go/v2` per Go's semantic import versioning rules for major version 2+.
+- No behavioral changes: `model.LLM`'s interface (`Name`, `GenerateContent`, `LLMRequest`) is identical between adk-go v1.0.0 and v2.0.0.
+- Populate the new `LLMResponse.ModelVersion` field with Anthropic's resolved model string on every response, streaming and non-streaming.
+- Bump `google.golang.org/genai` to v1.57.0 (pulled in transitively by adk-go v2).
+- The previous adk-go v1.x line continues on the `v1` branch, tagged `v1.x.x`. See the README's Versioning section.
+
 ## [v0.1.18] - GA structured outputs on Vertex AI
 
 - Anthropic structured outputs are now GA on Vertex AI (`output_config.format` with a `json_schema`, no beta header), so `convertRequest` sends the real `OutputConfig` schema on the Vertex path — the same GA path the direct API already uses. Object schemas are emitted with `additionalProperties: false` on every node, which Anthropic structured outputs require.
