@@ -1,5 +1,10 @@
 # Changelog
 
+## [v1.0.0] - Promote to stable v1 line
+
+- Promote the adk-go v1.x-based line to a stable `v1.0.0` release. No code changes — this is a version-number relabeling. `v1` is now the permanent maintenance branch for consumers on `google.golang.org/adk` v1.x (module path unchanged: `github.com/Alcova-AI/adk-anthropic-go`).
+- adk-go v2 support is being added as a new `v2` line on `main`, tracking `google.golang.org/adk/v2` (module path `github.com/Alcova-AI/adk-anthropic-go/v2`). Both lines are maintained going forward — see the project's `main` branch README for details on the v2 line.
+
 ## [v0.1.18] - GA structured outputs on Vertex AI
 
 - Anthropic structured outputs are now GA on Vertex AI (`output_config.format` with a `json_schema`, no beta header), so `convertRequest` sends the real `OutputConfig` schema on the Vertex path — the same GA path the direct API already uses. Object schemas are emitted with `additionalProperties: false` on every node, which Anthropic structured outputs require.
