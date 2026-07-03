@@ -7,8 +7,19 @@ This package implements the `model.LLM` interface for Anthropic Claude models, a
 ## Installation
 
 ```bash
-go get github.com/Alcova-AI/adk-anthropic-go
+go get github.com/Alcova-AI/adk-anthropic-go/v2
 ```
+
+## Versioning
+
+This package tracks two lines, matching Google's `adk-go` major versions:
+
+| Branch | Install | adk-go dependency |
+|---|---|---|
+| `main` (v2.x) | `go get github.com/Alcova-AI/adk-anthropic-go/v2` | `google.golang.org/adk/v2` |
+| `v1` (v1.x) | `go get github.com/Alcova-AI/adk-anthropic-go` | `google.golang.org/adk` (v1.x) |
+
+Both lines are maintained. If you're upgrading your own `adk-go` dependency to v2, see [adk-go's migration guide](https://github.com/google/adk-go/blob/main/README-v2.md) for changes that affect your application code directly (e.g. `session.NewEvent` now takes a `context.Context`, and `ToolContext`/`CallbackContext` are unified into `agent.Context`) — this package's `model.LLM` implementation is unaffected by those changes.
 
 ## Features
 
@@ -44,8 +55,8 @@ import (
 	"os"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	adkanthropic "github.com/Alcova-AI/adk-anthropic-go"
-	"google.golang.org/adk/agent/llmagent"
+	adkanthropic "github.com/Alcova-AI/adk-anthropic-go/v2"
+	"google.golang.org/adk/v2/agent/llmagent"
 )
 
 func main() {
