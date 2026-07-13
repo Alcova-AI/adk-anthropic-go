@@ -1,5 +1,10 @@
 # Changelog
 
+## [v2.0.1] - Preserve thinking blocks across assistant turns
+
+- Prevent Anthropic 400 errors when ADK history contains consecutive assistant turns by keeping signed and redacted thinking blocks immutable and inserting synthetic user continuation boundaries instead of merging protected messages.
+- Preserve empty and redacted thinking through persisted history, and reject malformed signatures or unresolved tool-use histories before sending an invalid request.
+
 ## [v2.0.0] - Migrate to adk-go v2
 
 - Upgrade `google.golang.org/adk` to `google.golang.org/adk/v2` v2.0.0 — module path changes to `github.com/Alcova-AI/adk-anthropic-go/v2` per Go's semantic import versioning rules for major version 2+.
