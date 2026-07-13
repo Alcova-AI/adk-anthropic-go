@@ -1291,6 +1291,7 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 		wantAdaptive bool
 		wantBudget   int64
 		wantEffort   anthropic.OutputConfigEffort
+		wantDisplay  string
 	}{
 		// Model-aware level → adaptive + effort
 		{
@@ -1299,6 +1300,15 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 			model:        anthropic.ModelClaudeSonnet4_6,
 			wantAdaptive: true,
 			wantEffort:   anthropic.OutputConfigEffortHigh,
+			wantDisplay:  "omitted",
+		},
+		{
+			name:         "HIGH with IncludeThoughts on Sonnet 4.6 returns summaries",
+			cfg:          &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh, IncludeThoughts: true},
+			model:        anthropic.ModelClaudeSonnet4_6,
+			wantAdaptive: true,
+			wantEffort:   anthropic.OutputConfigEffortHigh,
+			wantDisplay:  "summarized",
 		},
 		{
 			name:         "MEDIUM on Opus 4.6 → adaptive + medium effort",
@@ -1330,10 +1340,11 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 
 		// Non-adaptive models fall back to manual budget
 		{
-			name:       "HIGH on Haiku 4.5 → manual budget 10000 (no effort)",
-			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
-			model:      anthropic.ModelClaudeHaiku4_5,
-			wantBudget: 10000,
+			name:        "HIGH on Haiku 4.5 → manual budget 10000 (no effort)",
+			cfg:         &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:       anthropic.ModelClaudeHaiku4_5,
+			wantBudget:  10000,
+			wantDisplay: "omitted",
 		},
 		{
 			name:       "MEDIUM on Haiku 4.5 → manual budget 5000 (no effort)",
@@ -1348,26 +1359,35 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 			wantBudget: 1024,
 		},
 
-		// IncludeThoughts is ignored — it's an output-visibility flag, not a thinking toggle
+		// IncludeThoughts controls output visibility without enabling thinking.
 		{
-			name:         "IncludeThoughts ignored on Sonnet 4.6 → adaptive default, no effort",
+			name:         "IncludeThoughts on Sonnet 4.6 → adaptive default with summaries",
 			cfg:          &genai.ThinkingConfig{IncludeThoughts: true},
 			model:        anthropic.ModelClaudeSonnet4_6,
 			wantAdaptive: true,
+			wantDisplay:  "summarized",
 		},
 		{
-			name:    "IncludeThoughts ignored on Haiku 4.5 → off",
+			name:    "IncludeThoughts alone on Haiku 4.5 → off",
 			cfg:     &genai.ThinkingConfig{IncludeThoughts: true},
 			model:   anthropic.ModelClaudeHaiku4_5,
 			wantNil: true,
 		},
+		{
+			name:        "manual thinking with IncludeThoughts returns summaries",
+			cfg:         &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh, IncludeThoughts: true},
+			model:       anthropic.ModelClaudeHaiku4_5,
+			wantBudget:  10000,
+			wantDisplay: "summarized",
+		},
 
 		// Explicit overrides remain authoritative
 		{
-			name:       "ThinkingBudget overrides level on any model",
-			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh, ThinkingBudget: int32Ptr(2048)},
-			model:      anthropic.ModelClaudeSonnet4_6,
-			wantBudget: 2048,
+			name:        "ThinkingBudget overrides level on any model",
+			cfg:         &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh, ThinkingBudget: int32Ptr(2048)},
+			model:       anthropic.ModelClaudeSonnet4_6,
+			wantBudget:  2048,
+			wantDisplay: "omitted",
 		},
 
 		// Empty model name (legacy single-arg behaviour) prefers manual budget
@@ -1399,6 +1419,7 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 			cfg:          nil,
 			model:        anthropic.ModelClaudeSonnet4_6,
 			wantAdaptive: true,
+			wantDisplay:  "omitted",
 		},
 		{
 			name:    "nil config on manual-only model → off",
@@ -1411,6 +1432,7 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 			cfg:          &genai.ThinkingConfig{},
 			model:        anthropic.ModelClaudeSonnet4_6,
 			wantAdaptive: true,
+			wantDisplay:  "omitted",
 		},
 		{
 			name:    "empty cfg on manual-only model → off",
@@ -1452,6 +1474,16 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 
 			if got.Effort != tt.wantEffort {
 				t.Errorf("Effort = %q, want %q", got.Effort, tt.wantEffort)
+			}
+
+			var display string
+			if got.Thinking.OfAdaptive != nil {
+				display = string(got.Thinking.OfAdaptive.Display)
+			} else if got.Thinking.OfEnabled != nil {
+				display = string(got.Thinking.OfEnabled.Display)
+			}
+			if tt.wantDisplay != "" && display != tt.wantDisplay {
+				t.Errorf("Display = %q, want %q", display, tt.wantDisplay)
 			}
 		})
 	}

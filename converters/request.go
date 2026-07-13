@@ -456,21 +456,22 @@ type ThinkingMapping struct {
 //  7. empty cfg (no fields set), adaptive-capable            → adaptive (default effort = high)
 //  8. empty cfg, manual-only                                 → off
 //
-// IncludeThoughts is ignored: in genai it governs whether thought summaries
-// are returned, not whether the model thinks, and Anthropic returns thinking
-// blocks whenever thinking is on regardless. Thinking is driven solely by
-// ThinkingBudget / ThinkingLevel and the per-tier default.
+// IncludeThoughts controls whether Anthropic returns summarized thinking text.
+// It maps to thinking.display without enabling or disabling thinking: true uses
+// "summarized", while false (including the zero value) uses "omitted". Thinking
+// itself remains driven solely by ThinkingBudget / ThinkingLevel and the
+// per-tier default.
 func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model) ThinkingMapping {
 	adaptive := supportsAdaptiveThinking(model)
 
 	if cfg == nil {
 		if adaptive {
-			return ThinkingMapping{Thinking: adaptiveThinking()}
+			return ThinkingMapping{Thinking: adaptiveThinking(false)}
 		}
 		return ThinkingMapping{}
 	}
 	if cfg.ThinkingBudget != nil {
-		return ThinkingMapping{Thinking: anthropic.ThinkingConfigParamOfEnabled(int64(*cfg.ThinkingBudget))}
+		return ThinkingMapping{Thinking: enabledThinking(int64(*cfg.ThinkingBudget), cfg.IncludeThoughts)}
 	}
 
 	switch cfg.ThinkingLevel {
@@ -483,20 +484,18 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 	case genai.ThinkingLevelLow, genai.ThinkingLevelMedium, genai.ThinkingLevelHigh:
 		if adaptive {
 			return ThinkingMapping{
-				Thinking: adaptiveThinking(),
+				Thinking: adaptiveThinking(cfg.IncludeThoughts),
 				Effort:   levelToEffort(cfg.ThinkingLevel),
 			}
 		}
-		return ThinkingMapping{Thinking: anthropic.ThinkingConfigParamOfEnabled(levelToBudget(cfg.ThinkingLevel))}
+		return ThinkingMapping{Thinking: enabledThinking(levelToBudget(cfg.ThinkingLevel), cfg.IncludeThoughts)}
 	}
 
-	// IncludeThoughts is intentionally ignored — see the doc comment above.
-	//
 	// Empty cfg (no fields set, or only IncludeThoughts) — same as nil: pick
 	// the per-tier default. Callers who want thinking off on an adaptive-capable
 	// model must say so explicitly via ThinkingLevel: Minimal.
 	if adaptive {
-		return ThinkingMapping{Thinking: adaptiveThinking()}
+		return ThinkingMapping{Thinking: adaptiveThinking(cfg.IncludeThoughts)}
 	}
 	return ThinkingMapping{}
 }
@@ -505,7 +504,8 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 // callers that don't have a model handy and don't care about the effort
 // hint. Equivalent to ThinkingConfigToAnthropic(cfg, "").Thinking — empty
 // model means "treat as non-adaptive", so Low/High/explicit ThinkingBudget
-// keep their v0.1.9 manual-budget mapping (IncludeThoughts is ignored).
+// keep their v0.1.9 manual-budget mapping. IncludeThoughts controls display
+// whenever thinking is enabled.
 //
 // One small behaviour shift vs v0.1.9 worth knowing about: ThinkingLevel:
 // Medium previously fell through v0.1.9's switch (which only enumerated
@@ -522,9 +522,28 @@ func ThinkingConfigToAnthropicThinking(cfg *genai.ThinkingConfig) anthropic.Thin
 }
 
 // adaptiveThinking returns the parameter union for Anthropic adaptive mode.
-func adaptiveThinking() anthropic.ThinkingConfigParamUnion {
+func adaptiveThinking(includeThoughts bool) anthropic.ThinkingConfigParamUnion {
+	display := anthropic.ThinkingConfigAdaptiveDisplayOmitted
+	if includeThoughts {
+		display = anthropic.ThinkingConfigAdaptiveDisplaySummarized
+	}
 	return anthropic.ThinkingConfigParamUnion{
-		OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{},
+		OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{Display: display},
+	}
+}
+
+// enabledThinking returns a manual thinking configuration with display mapped
+// independently from the reasoning budget.
+func enabledThinking(budget int64, includeThoughts bool) anthropic.ThinkingConfigParamUnion {
+	display := anthropic.ThinkingConfigEnabledDisplayOmitted
+	if includeThoughts {
+		display = anthropic.ThinkingConfigEnabledDisplaySummarized
+	}
+	return anthropic.ThinkingConfigParamUnion{
+		OfEnabled: &anthropic.ThinkingConfigEnabledParam{
+			BudgetTokens: budget,
+			Display:      display,
+		},
 	}
 }
 

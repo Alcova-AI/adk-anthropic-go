@@ -284,8 +284,10 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 		// the direct API and Vertex AI (output_config.format with a json_schema,
 		// no beta header), so the same path serves both variants.
 		if req.Config.ResponseSchema != nil {
-			schemaMap := converters.SchemaToMap(req.Config.ResponseSchema)
-			enforceStrictObjectSchema(schemaMap)
+			schemaMap, err := converters.SchemaToStructuredOutputMap(req.Config.ResponseSchema)
+			if err != nil {
+				return anthropic.MessageNewParams{}, fmt.Errorf("failed to transform response schema: %w", err)
+			}
 			params.OutputConfig = anthropic.OutputConfigParam{
 				Format: anthropic.JSONOutputFormatParam{
 					Schema: schemaMap,
@@ -332,34 +334,6 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 	}
 
 	return params, nil
-}
-
-// enforceStrictObjectSchema recursively sets additionalProperties:false on every
-// object node of a JSON-schema map. Anthropic structured outputs reject an
-// "object" schema that doesn't explicitly disallow additional properties
-// ("output_config.format.schema: For 'object' type, 'additionalProperties' must
-// be explicitly set to false"), and the genai→map conversion doesn't emit it.
-func enforceStrictObjectSchema(node any) {
-	switch n := node.(type) {
-	case map[string]any:
-		if t, ok := n["type"].(string); ok && t == "object" {
-			if _, exists := n["additionalProperties"]; !exists {
-				n["additionalProperties"] = false
-			}
-		}
-		for _, v := range n {
-			enforceStrictObjectSchema(v)
-		}
-	case []map[string]any:
-		// SchemaToMap stores anyOf branches as []map[string]any, not []any.
-		for _, v := range n {
-			enforceStrictObjectSchema(v)
-		}
-	case []any:
-		for _, v := range n {
-			enforceStrictObjectSchema(v)
-		}
-	}
 }
 
 // maybeAppendUserContent ensures the conversation ends with a user message.

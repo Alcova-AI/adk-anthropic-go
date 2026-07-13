@@ -1,5 +1,10 @@
 # Changelog
 
+## [v2.0.2] - Normalize structured schemas and thinking display
+
+- Transform response schemas through Anthropic's compatibility rules before sending `output_config`, including moving unsupported constraints into descriptions and enforcing `additionalProperties: false` recursively.
+- Map `IncludeThoughts` to Anthropic's thinking `display`: return summarized thoughts only when requested, otherwise omit their text while preserving signed thinking continuity.
+
 ## [v2.0.1] - Preserve thinking blocks across assistant turns
 
 - Prevent Anthropic 400 errors when ADK history contains consecutive assistant turns by keeping signed and redacted thinking blocks immutable and inserting synthetic user continuation boundaries instead of merging protected messages.

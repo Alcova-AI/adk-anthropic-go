@@ -272,6 +272,61 @@ func SchemaToMap(schema *genai.Schema) map[string]any {
 	return result
 }
 
+// SchemaToStructuredOutputMap converts a genai schema and applies Anthropic's
+// structured-output compatibility transformation. The SDK currently exposes
+// this transformation through a legacy Beta-named helper; only its transformed
+// schema map is used here with the GA output_config API.
+func SchemaToStructuredOutputMap(schema *genai.Schema) (map[string]any, error) {
+	schemaMap := SchemaToMap(schema)
+	preserveUnsupportedNumericConstraints(schemaMap)
+	transformed := anthropic.BetaJSONSchemaOutputFormat(schemaMap).Schema
+	result, ok := transformed.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("Anthropic schema transformer returned %T, want map[string]any", transformed)
+	}
+	return result, nil
+}
+
+// preserveUnsupportedNumericConstraints moves numeric constraints Anthropic's
+// structured-output grammar does not support into descriptions before invoking
+// the SDK transformer. Doing this while they are scalar map values avoids the
+// SDK's JSON-schema round trip rendering pointer-backed values as addresses.
+func preserveUnsupportedNumericConstraints(node any) {
+	switch n := node.(type) {
+	case map[string]any:
+		var extras []string
+		for _, key := range []string{"maxItems", "maxLength", "maximum", "minLength", "minimum"} {
+			if value, exists := n[key]; exists {
+				extras = append(extras, fmt.Sprintf("%s: %v", key, value))
+				delete(n, key)
+			}
+		}
+		if value, exists := n["minItems"]; exists && value != int64(0) && value != int64(1) {
+			extras = append(extras, fmt.Sprintf("minItems: %v", value))
+			delete(n, "minItems")
+		}
+		if len(extras) > 0 {
+			extraDescription := "{" + strings.Join(extras, ", ") + "}"
+			if description, _ := n["description"].(string); description != "" {
+				n["description"] = description + "\n\n" + extraDescription
+			} else {
+				n["description"] = extraDescription
+			}
+		}
+		for _, value := range n {
+			preserveUnsupportedNumericConstraints(value)
+		}
+	case []map[string]any:
+		for _, value := range n {
+			preserveUnsupportedNumericConstraints(value)
+		}
+	case []any:
+		for _, value := range n {
+			preserveUnsupportedNumericConstraints(value)
+		}
+	}
+}
+
 // toolChoiceKind represents the resolved tool choice type.
 type toolChoiceKind int
 

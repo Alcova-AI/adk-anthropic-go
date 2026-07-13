@@ -189,6 +189,95 @@ func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse(t *testin
 	assertAdditionalPropertiesFalse(t, items, "tags.items")
 }
 
+func TestConvertRequest_VertexAI_TransformsUnsupportedSchemaConstraints(t *testing.T) {
+	m := &anthropicModel{
+		name:             "claude-haiku-4-5-20251001",
+		variant:          VariantVertexAI,
+		defaultMaxTokens: defaultMaxTokens,
+	}
+
+	minimum, maximum := 1.0, 100.0
+	minLength, maxLength := int64(2), int64(50)
+	minItems, maxItems := int64(2), int64(20)
+	schema := &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"score": {
+				Type:        genai.TypeNumber,
+				Description: "A score",
+				Minimum:     &minimum,
+				Maximum:     &maximum,
+			},
+			"name": {
+				Type:      genai.TypeString,
+				MinLength: &minLength,
+				MaxLength: &maxLength,
+			},
+			"tags": {
+				Type:     genai.TypeArray,
+				Items:    &genai.Schema{Type: genai.TypeString},
+				MinItems: &minItems,
+				MaxItems: &maxItems,
+			},
+		},
+	}
+
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
+		Config:   &genai.GenerateContentConfig{ResponseSchema: schema},
+	}
+
+	params, err := m.convertRequest(req)
+	if err != nil {
+		t.Fatalf("convertRequest() error = %v", err)
+	}
+
+	root := params.OutputConfig.Format.Schema
+	properties, ok := root["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties = %T, want map[string]any", root["properties"])
+	}
+
+	score, ok := properties["score"].(map[string]any)
+	if !ok {
+		t.Fatalf("score = %T, want map[string]any", properties["score"])
+	}
+	for _, unsupported := range []string{"minimum", "maximum"} {
+		if _, exists := score[unsupported]; exists {
+			t.Errorf("score.%s should be removed from the Anthropic schema", unsupported)
+		}
+	}
+	if description, _ := score["description"].(string); !strings.Contains(description, "maximum: 100") || !strings.Contains(description, "minimum: 1") {
+		t.Errorf("score.description = %q, want preserved minimum and maximum guidance", description)
+	}
+
+	name, ok := properties["name"].(map[string]any)
+	if !ok {
+		t.Fatalf("name = %T, want map[string]any", properties["name"])
+	}
+	for _, unsupported := range []string{"minLength", "maxLength"} {
+		if _, exists := name[unsupported]; exists {
+			t.Errorf("name.%s should be removed from the Anthropic schema", unsupported)
+		}
+	}
+	if description, _ := name["description"].(string); !strings.Contains(description, "maxLength: 50") || !strings.Contains(description, "minLength: 2") {
+		t.Errorf("name.description = %q, want preserved length guidance", description)
+	}
+
+	tags, ok := properties["tags"].(map[string]any)
+	if !ok {
+		t.Fatalf("tags = %T, want map[string]any", properties["tags"])
+	}
+	for _, unsupported := range []string{"minItems", "maxItems"} {
+		if _, exists := tags[unsupported]; exists {
+			t.Errorf("tags.%s should be removed from the Anthropic schema", unsupported)
+		}
+	}
+	if description, _ := tags["description"].(string); !strings.Contains(description, "maxItems: 20") || !strings.Contains(description, "minItems: 2") {
+		t.Errorf("tags.description = %q, want preserved item-count guidance", description)
+	}
+}
+
 func assertAdditionalPropertiesFalse(t *testing.T, schema map[string]any, label string) {
 	t.Helper()
 	if schema == nil {
@@ -245,12 +334,16 @@ func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse_AnyOf(t *
 
 	props, _ := root["properties"].(map[string]any)
 	choice, _ := props["choice"].(map[string]any)
-	anyOf, ok := choice["anyOf"].([]map[string]any)
+	anyOf, ok := choice["anyOf"].([]any)
 	if !ok {
-		t.Fatalf("choice.anyOf: want []map[string]any, got %T", choice["anyOf"])
+		t.Fatalf("choice.anyOf: want []any, got %T", choice["anyOf"])
+	}
+	objectBranch, ok := anyOf[0].(map[string]any)
+	if !ok {
+		t.Fatalf("choice.anyOf[0]: want map[string]any, got %T", anyOf[0])
 	}
 	// The object branch under anyOf must get additionalProperties:false.
-	assertAdditionalPropertiesFalse(t, anyOf[0], "choice.anyOf[0]")
+	assertAdditionalPropertiesFalse(t, objectBranch, "choice.anyOf[0]")
 }
 
 func TestConvertRequest_DirectAPI_SetsOutputConfig(t *testing.T) {
