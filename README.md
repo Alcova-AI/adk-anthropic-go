@@ -166,12 +166,14 @@ Mode mapping:
 
 ### Extended Thinking (ThinkingConfig)
 
-Use `ThinkingConfig` to enable extended thinking:
+Use `ThinkingConfig` to control extended thinking. Set `IncludeThoughts` when
+you also want summarized thinking text returned in the response:
 
 ```go
 config := &genai.GenerateContentConfig{
 	ThinkingConfig: &genai.ThinkingConfig{
-		ThinkingLevel: genai.ThinkingLevelHigh,
+		ThinkingLevel:  genai.ThinkingLevelHigh,
+		IncludeThoughts: true,
 	},
 }
 ```
@@ -189,12 +191,18 @@ config := &genai.GenerateContentConfig{
 Mapping:
 | `genai` ThinkingConfig | Anthropic Behavior |
 |---|---|
-| `ThinkingLevel: HIGH` | Thinking enabled, 10,000 token budget |
-| `ThinkingLevel: LOW` | Thinking enabled, 1,024 token budget (minimum) |
-| `ThinkingBudget` set | Thinking enabled with the exact budget (overrides level defaults) |
-| `IncludeThoughts: true` (no level/budget) | Thinking enabled, 10,000 token budget |
+| `ThinkingLevel: HIGH` | Adaptive thinking with high effort on supported models; otherwise manual thinking with a 10,000-token budget |
+| `ThinkingLevel: MEDIUM` | Adaptive thinking with medium effort on supported models; otherwise manual thinking with a 5,000-token budget |
+| `ThinkingLevel: LOW` | Adaptive thinking with low effort on supported models; otherwise manual thinking with the minimum 1,024-token budget |
+| `ThinkingLevel: MINIMAL` | Thinking disabled |
+| `ThinkingBudget` set | Manual thinking with the exact budget, overriding `ThinkingLevel` |
+| `IncludeThoughts: true` | Return summarized thinking text when thinking is enabled; does not enable thinking |
+| `IncludeThoughts: false` or unset | Omit thinking text while preserving its signature for multi-turn continuity; does not disable thinking |
+| Nil or otherwise empty config | Adaptive thinking with the provider's default effort on supported models; thinking disabled on manual-only models |
 
-Thinking blocks in responses are mapped to `genai.Part` with `Thought=true` and `ThoughtSignature` preserved for multi-turn conversations.
+Thinking blocks in responses are mapped to `genai.Part` with `Thought=true` and
+`ThoughtSignature` preserved for multi-turn conversations. When thoughts are
+omitted, the part has empty text but retains its signature.
 
 ## License
 
