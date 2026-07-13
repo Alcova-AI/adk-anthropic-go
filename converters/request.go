@@ -25,8 +25,15 @@ import (
 	"google.golang.org/genai"
 )
 
-// ContentsToMessages converts genai Contents to Anthropic MessageParams.
-// It handles role mapping and content part conversion.
+const (
+	continuationPrompt              = "Continue processing previous requests as instructed. Exit or provide a summary if no more outputs are needed."
+	redactedThinkingDataMetadataKey = "anthropic.redacted_thinking_data"
+)
+
+// ContentsToMessages converts genai Contents to Anthropic MessageParams. It
+// merges ordinary same-role turns, but inserts a synthetic user continuation
+// between assistant turns when merging would modify a thinking block. It
+// returns an error when an unresolved tool use prevents inserting that boundary.
 func ContentsToMessages(contents []*genai.Content) ([]anthropic.MessageParam, error) {
 	if len(contents) == 0 {
 		return nil, nil
@@ -47,8 +54,12 @@ func ContentsToMessages(contents []*genai.Content) ([]anthropic.MessageParam, er
 		}
 	}
 
-	// Merge consecutive messages with the same role (Anthropic requires alternating roles)
-	messages = mergeConsecutiveMessages(messages)
+	// Anthropic combines consecutive messages with the same role. Normalise them
+	// explicitly so signed thinking blocks retain their original message boundary.
+	messages, err := normalizeConsecutiveMessages(messages)
+	if err != nil {
+		return nil, fmt.Errorf("failed to normalize messages: %w", err)
+	}
 
 	return messages, nil
 }
@@ -133,22 +144,23 @@ func PartToContentBlock(part *genai.Part) (*anthropic.ContentBlockParamUnion, er
 		return nil, nil
 	}
 
+	if data, ok := redactedThinkingData(part); ok {
+		block := anthropic.NewRedactedThinkingBlock(data)
+		return &block, nil
+	}
+
+	// Thoughts from model responses must be passed back with their signature,
+	// including when Anthropic returned an empty thinking summary.
+	if part.Thought && len(part.ThoughtSignature) > 0 {
+		block := anthropic.NewThinkingBlock(
+			base64.StdEncoding.EncodeToString(part.ThoughtSignature),
+			part.Text,
+		)
+		return &block, nil
+	}
+
 	// Text content
 	if part.Text != "" {
-		// Check if this is a thought block
-		if part.Thought {
-			// Thoughts from model responses need to be passed back with signature
-			if len(part.ThoughtSignature) > 0 {
-				block := anthropic.ContentBlockParamUnion{
-					OfThinking: &anthropic.ThinkingBlockParam{
-						Thinking:  part.Text,
-						Signature: base64.StdEncoding.EncodeToString(part.ThoughtSignature),
-					},
-				}
-				return &block, nil
-			}
-			// If no signature, treat as regular text (shouldn't happen in valid flow)
-		}
 		block := anthropic.NewTextBlock(part.Text)
 		return &block, nil
 	}
@@ -181,6 +193,14 @@ func PartToContentBlock(part *genai.Part) (*anthropic.ContentBlockParamUnion, er
 	}
 
 	return nil, nil
+}
+
+func redactedThinkingData(part *genai.Part) (string, bool) {
+	if !part.Thought || part.PartMetadata == nil {
+		return "", false
+	}
+	data, ok := part.PartMetadata[redactedThinkingDataMetadataKey].(string)
+	return data, ok
 }
 
 // inlineDataToBlock converts inline binary data to an Anthropic content block.
@@ -343,29 +363,60 @@ func SystemInstructionToSystem(instruction *genai.Content) []anthropic.TextBlock
 	return blocks
 }
 
-// mergeConsecutiveMessages merges consecutive messages with the same role.
-// Anthropic requires strictly alternating user/assistant messages.
-func mergeConsecutiveMessages(messages []anthropic.MessageParam) []anthropic.MessageParam {
+// normalizeConsecutiveMessages makes roles alternate without modifying
+// thinking-bearing messages. Anthropic rejects signed thinking blocks when
+// their original assistant message is changed, including by combining it with
+// an adjacent assistant message.
+func normalizeConsecutiveMessages(messages []anthropic.MessageParam) ([]anthropic.MessageParam, error) {
 	if len(messages) <= 1 {
-		return messages
+		return messages, nil
 	}
 
-	var merged []anthropic.MessageParam
+	var normalized []anthropic.MessageParam
 	for i, msg := range messages {
 		if i == 0 {
-			merged = append(merged, msg)
+			normalized = append(normalized, msg)
 			continue
 		}
 
-		last := &merged[len(merged)-1]
-		if last.Role == msg.Role {
-			// Merge content blocks
-			last.Content = append(last.Content, msg.Content...)
+		last := &normalized[len(normalized)-1]
+		if last.Role != msg.Role {
+			normalized = append(normalized, msg)
+			continue
+		}
+
+		if msg.Role == anthropic.MessageParamRoleAssistant &&
+			(hasThinkingBlock(last.Content) || hasThinkingBlock(msg.Content)) {
+			if hasToolUseBlock(last.Content) {
+				return nil, fmt.Errorf("cannot preserve thinking boundary after tool use without an intervening tool result")
+			}
+			normalized = append(normalized,
+				anthropic.NewUserMessage(anthropic.NewTextBlock(continuationPrompt)),
+				msg,
+			)
 		} else {
-			merged = append(merged, msg)
+			last.Content = append(last.Content, msg.Content...)
 		}
 	}
-	return merged
+	return normalized, nil
+}
+
+func hasThinkingBlock(blocks []anthropic.ContentBlockParamUnion) bool {
+	for _, block := range blocks {
+		if block.OfThinking != nil || block.OfRedactedThinking != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func hasToolUseBlock(blocks []anthropic.ContentBlockParamUnion) bool {
+	for _, block := range blocks {
+		if block.OfToolUse != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // ThinkingMapping bundles the Anthropic thinking parameter and the optional

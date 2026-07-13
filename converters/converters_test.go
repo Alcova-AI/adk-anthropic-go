@@ -15,6 +15,7 @@
 package converters_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -69,7 +70,7 @@ func TestContentsToMessages_MultiTurn(t *testing.T) {
 	}
 }
 
-func TestContentsToMessages_MergesConsecutiveRoles(t *testing.T) {
+func TestContentsToMessages_MergesConsecutiveUserMessages(t *testing.T) {
 	contents := []*genai.Content{
 		genai.NewContentFromText("Hello", "user"),
 		genai.NewContentFromText("How are you?", "user"),
@@ -88,6 +89,299 @@ func TestContentsToMessages_MergesConsecutiveRoles(t *testing.T) {
 	// Should have 2 content blocks
 	if len(messages[0].Content) != 2 {
 		t.Errorf("expected 2 content blocks, got %d", len(messages[0].Content))
+	}
+}
+
+func TestContentsToMessages_MergesConsecutiveAssistantMessagesWithoutThinking(t *testing.T) {
+	contents := []*genai.Content{
+		genai.NewContentFromText("First response", "model"),
+		genai.NewContentFromText("Second response", "model"),
+	}
+
+	messages, err := converters.ContentsToMessages(contents)
+	if err != nil {
+		t.Fatalf("ContentsToMessages() error = %v", err)
+	}
+
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 merged message, got %d", len(messages))
+	}
+	if messages[0].Role != anthropic.MessageParamRoleAssistant {
+		t.Errorf("role = %q, want %q", messages[0].Role, anthropic.MessageParamRoleAssistant)
+	}
+	if len(messages[0].Content) != 2 {
+		t.Errorf("expected 2 content blocks, got %d", len(messages[0].Content))
+	}
+}
+
+func TestContentsToMessages_PreservesBoundaryWhenEitherAssistantMessageHasThinking(t *testing.T) {
+	thought := &genai.Part{
+		Text:             "Signed thought",
+		Thought:          true,
+		ThoughtSignature: []byte("signature"),
+	}
+	emptyThought := &genai.Part{
+		Thought:          true,
+		ThoughtSignature: []byte("signature"),
+	}
+	plain := &genai.Part{Text: "Plain response"}
+	tests := []struct {
+		name  string
+		parts []*genai.Part
+	}{
+		{name: "thinking then plain", parts: []*genai.Part{thought, plain}},
+		{name: "plain then thinking", parts: []*genai.Part{plain, thought}},
+		{name: "empty thinking then plain", parts: []*genai.Part{emptyThought, plain}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			messages, err := converters.ContentsToMessages([]*genai.Content{
+				{Role: "model", Parts: []*genai.Part{tt.parts[0]}},
+				{Role: "model", Parts: []*genai.Part{tt.parts[1]}},
+			})
+			if err != nil {
+				t.Fatalf("ContentsToMessages() error = %v", err)
+			}
+
+			wantRoles := []anthropic.MessageParamRole{
+				anthropic.MessageParamRoleAssistant,
+				anthropic.MessageParamRoleUser,
+				anthropic.MessageParamRoleAssistant,
+			}
+			if len(messages) != len(wantRoles) {
+				t.Fatalf("expected %d messages, got %d", len(wantRoles), len(messages))
+			}
+			for i, wantRole := range wantRoles {
+				if messages[i].Role != wantRole {
+					t.Errorf("message %d: role = %q, want %q", i, messages[i].Role, wantRole)
+				}
+			}
+		})
+	}
+}
+
+func TestContentsToMessages_PreservesRedactedThinkingBoundary(t *testing.T) {
+	var responseBlock anthropic.ContentBlockUnion
+	if err := responseBlock.UnmarshalJSON([]byte(`{
+		"type": "redacted_thinking",
+		"data": "opaque-redacted-data"
+	}`)); err != nil {
+		t.Fatalf("failed to unmarshal redacted thinking block: %v", err)
+	}
+
+	redactedPart, err := converters.ContentBlockToGenaiPart(responseBlock)
+	if err != nil {
+		t.Fatalf("ContentBlockToGenaiPart() error = %v", err)
+	}
+	partJSON, err := json.Marshal(redactedPart)
+	if err != nil {
+		t.Fatalf("failed to marshal redacted thinking part: %v", err)
+	}
+	var persistedPart genai.Part
+	if err := json.Unmarshal(partJSON, &persistedPart); err != nil {
+		t.Fatalf("failed to unmarshal redacted thinking part: %v", err)
+	}
+	messages, err := converters.ContentsToMessages([]*genai.Content{
+		{Role: "model", Parts: []*genai.Part{&persistedPart}},
+		genai.NewContentFromText("Plain response", "model"),
+	})
+	if err != nil {
+		t.Fatalf("ContentsToMessages() error = %v", err)
+	}
+
+	wantRoles := []anthropic.MessageParamRole{
+		anthropic.MessageParamRoleAssistant,
+		anthropic.MessageParamRoleUser,
+		anthropic.MessageParamRoleAssistant,
+	}
+	if len(messages) != len(wantRoles) {
+		t.Fatalf("expected %d messages, got %d", len(wantRoles), len(messages))
+	}
+	for i, wantRole := range wantRoles {
+		if messages[i].Role != wantRole {
+			t.Errorf("message %d: role = %q, want %q", i, messages[i].Role, wantRole)
+		}
+	}
+
+	redactedThinking := messages[0].Content[0].OfRedactedThinking
+	if redactedThinking == nil {
+		t.Fatal("first assistant message does not contain redacted thinking")
+	}
+	if redactedThinking.Data != "opaque-redacted-data" {
+		t.Errorf("redacted thinking data = %q, want %q", redactedThinking.Data, "opaque-redacted-data")
+	}
+}
+
+func TestThinkingBlock_RoundTripsThroughPersistedPart(t *testing.T) {
+	var responseBlock anthropic.ContentBlockUnion
+	if err := responseBlock.UnmarshalJSON([]byte(`{
+		"type": "thinking",
+		"thinking": "",
+		"signature": "c2lnbmF0dXJl"
+	}`)); err != nil {
+		t.Fatalf("failed to unmarshal thinking block: %v", err)
+	}
+
+	part, err := converters.ContentBlockToGenaiPart(responseBlock)
+	if err != nil {
+		t.Fatalf("ContentBlockToGenaiPart() error = %v", err)
+	}
+	partJSON, err := json.Marshal(part)
+	if err != nil {
+		t.Fatalf("failed to marshal thinking part: %v", err)
+	}
+	var persistedPart genai.Part
+	if err := json.Unmarshal(partJSON, &persistedPart); err != nil {
+		t.Fatalf("failed to unmarshal thinking part: %v", err)
+	}
+
+	requestBlock, err := converters.PartToContentBlock(&persistedPart)
+	if err != nil {
+		t.Fatalf("PartToContentBlock() error = %v", err)
+	}
+	if requestBlock == nil || requestBlock.OfThinking == nil {
+		t.Fatal("persisted part did not round-trip to a thinking block")
+	}
+	if requestBlock.OfThinking.Thinking != "" {
+		t.Errorf("thinking text = %q, want empty text", requestBlock.OfThinking.Thinking)
+	}
+	if requestBlock.OfThinking.Signature != "c2lnbmF0dXJl" {
+		t.Errorf("thinking signature = %q, want %q", requestBlock.OfThinking.Signature, "c2lnbmF0dXJl")
+	}
+}
+
+func TestContentsToMessages_RejectsThinkingBoundaryAfterToolUse(t *testing.T) {
+	_, err := converters.ContentsToMessages([]*genai.Content{
+		{
+			Role: "model",
+			Parts: []*genai.Part{
+				{Text: "Signed thought", Thought: true, ThoughtSignature: []byte("signature")},
+				{FunctionCall: &genai.FunctionCall{ID: "toolu_123", Name: "edit_document"}},
+			},
+		},
+		{
+			Role: "model",
+			Parts: []*genai.Part{
+				{Text: "Another thought", Thought: true, ThoughtSignature: []byte("signature-2")},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected missing tool result to return an error")
+	}
+	if !strings.Contains(err.Error(), "without an intervening tool result") {
+		t.Errorf("error = %q, want missing tool result context", err)
+	}
+}
+
+func TestContentBlockToGenaiPart_RejectsInvalidThinkingSignature(t *testing.T) {
+	var responseBlock anthropic.ContentBlockUnion
+	if err := responseBlock.UnmarshalJSON([]byte(`{
+		"type": "thinking",
+		"thinking": "Signed thought",
+		"signature": "not-valid-base64"
+	}`)); err != nil {
+		t.Fatalf("failed to unmarshal thinking block: %v", err)
+	}
+
+	_, err := converters.ContentBlockToGenaiPart(responseBlock)
+	if err == nil {
+		t.Fatal("expected invalid thinking signature to return an error")
+	}
+	if !strings.Contains(err.Error(), "failed to decode thinking signature") {
+		t.Errorf("error = %q, want thinking signature context", err)
+	}
+}
+
+func TestContentsToMessages_PreservesConsecutiveSignedThinkingMessages(t *testing.T) {
+	firstSignature := []byte("first-signature")
+	secondSignature := []byte("second-signature")
+	contents := []*genai.Content{
+		genai.NewContentFromText("Start", "user"),
+		{
+			Role: "model",
+			Parts: []*genai.Part{
+				{Text: "First thought", Thought: true, ThoughtSignature: firstSignature},
+			},
+		},
+		{
+			Role: "model",
+			Parts: []*genai.Part{
+				{Text: "Second thought", Thought: true, ThoughtSignature: secondSignature},
+				{FunctionCall: &genai.FunctionCall{
+					ID:   "toolu_123",
+					Name: "edit_document",
+					Args: map[string]any{"path": "report.docx"},
+				}},
+			},
+		},
+	}
+
+	messages, err := converters.ContentsToMessages(contents)
+	if err != nil {
+		t.Fatalf("ContentsToMessages() error = %v", err)
+	}
+
+	wantRoles := []anthropic.MessageParamRole{
+		anthropic.MessageParamRoleUser,
+		anthropic.MessageParamRoleAssistant,
+		anthropic.MessageParamRoleUser,
+		anthropic.MessageParamRoleAssistant,
+	}
+	if len(messages) != len(wantRoles) {
+		t.Fatalf("expected %d messages, got %d", len(wantRoles), len(messages))
+	}
+	for i, wantRole := range wantRoles {
+		if messages[i].Role != wantRole {
+			t.Errorf("message %d: role = %q, want %q", i, messages[i].Role, wantRole)
+		}
+	}
+	if len(messages[2].Content) != 1 || messages[2].Content[0].OfText == nil {
+		t.Fatal("inserted user continuation does not contain exactly one text block")
+	}
+	wantContinuation := "Continue processing previous requests as instructed. Exit or provide a summary if no more outputs are needed."
+	if messages[2].Content[0].OfText.Text != wantContinuation {
+		t.Errorf("continuation text = %q, want %q", messages[2].Content[0].OfText.Text, wantContinuation)
+	}
+
+	if len(messages[1].Content) != 1 {
+		t.Fatalf("first assistant message has %d blocks, want 1", len(messages[1].Content))
+	}
+	firstThinking := messages[1].Content[0].OfThinking
+	if firstThinking == nil {
+		t.Fatal("first assistant message does not contain a thinking block")
+	}
+	if firstThinking.Thinking != "First thought" {
+		t.Errorf("first thinking text = %q, want %q", firstThinking.Thinking, "First thought")
+	}
+	if firstThinking.Signature != "Zmlyc3Qtc2lnbmF0dXJl" {
+		t.Errorf("first thinking signature = %q, want original base64 signature", firstThinking.Signature)
+	}
+
+	if len(messages[3].Content) != 2 {
+		t.Fatalf("second assistant message has %d blocks, want 2", len(messages[3].Content))
+	}
+	secondThinking := messages[3].Content[0].OfThinking
+	if secondThinking == nil {
+		t.Fatal("second assistant message does not contain a thinking block")
+	}
+	if secondThinking.Thinking != "Second thought" {
+		t.Errorf("second thinking text = %q, want %q", secondThinking.Thinking, "Second thought")
+	}
+	if secondThinking.Signature != "c2Vjb25kLXNpZ25hdHVyZQ==" {
+		t.Errorf("second thinking signature = %q, want original base64 signature", secondThinking.Signature)
+	}
+
+	toolUse := messages[3].Content[1].OfToolUse
+	if toolUse == nil {
+		t.Fatal("second assistant message does not contain the original tool use")
+	}
+	if toolUse.ID != "toolu_123" || toolUse.Name != "edit_document" {
+		t.Errorf("tool use = (%q, %q), want (%q, %q)", toolUse.ID, toolUse.Name, "toolu_123", "edit_document")
+	}
+	if diff := cmp.Diff(map[string]any{"path": "report.docx"}, toolUse.Input); diff != "" {
+		t.Errorf("tool input mismatch (-want +got):\n%s", diff)
 	}
 }
 

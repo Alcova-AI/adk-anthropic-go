@@ -75,7 +75,10 @@ func ContentBlockToGenaiPart(block anthropic.ContentBlockUnion) (*genai.Part, er
 
 	case anthropic.ThinkingBlock:
 		// Map thinking blocks to genai.Part with Thought=true
-		signature, _ := base64.StdEncoding.DecodeString(variant.Signature)
+		signature, err := base64.StdEncoding.DecodeString(variant.Signature)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode thinking signature: %w", err)
+		}
 		return &genai.Part{
 			Text:             variant.Thinking,
 			Thought:          true,
@@ -83,10 +86,14 @@ func ContentBlockToGenaiPart(block anthropic.ContentBlockUnion) (*genai.Part, er
 		}, nil
 
 	case anthropic.RedactedThinkingBlock:
-		// Redacted thinking - we can't see the content but preserve the marker
+		// Keep the opaque data in provider-scoped metadata so the exact redacted
+		// block can be passed back while retaining a useful display marker.
 		return &genai.Part{
 			Text:    "[thinking redacted]",
 			Thought: true,
+			PartMetadata: map[string]any{
+				redactedThinkingDataMetadataKey: variant.Data,
+			},
 		}, nil
 
 	case anthropic.ToolUseBlock:
