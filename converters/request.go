@@ -557,10 +557,13 @@ func enabledThinking(budget int64, includeThoughts bool) anthropic.ThinkingConfi
 // static because the Models API that would report these limits is unavailable
 // on Vertex AI.
 const (
-	maxTokensSonnetOpus = 128000
-	maxTokensHaiku      = 64000
-	// maxTokensFloor is the conservative default for models we don't recognise.
-	maxTokensFloor = 64000
+	// MaxTokensSonnetOpus is the default max_tokens ceiling for Sonnet 4.6 and
+	// Opus 4.x.
+	MaxTokensSonnetOpus = 128000
+	// MaxTokensHaiku is the default max_tokens ceiling for Haiku 4.5.
+	MaxTokensHaiku = 64000
+	// MaxTokensFloor is the conservative default for models we don't recognise.
+	MaxTokensFloor = 64000
 )
 
 // DefaultMaxTokensForModel returns the default max_tokens ceiling for a model
@@ -573,13 +576,13 @@ func DefaultMaxTokensForModel(model anthropic.Model) int {
 	id := normalizeModelID(model)
 	switch {
 	case strings.HasPrefix(id, "claude-sonnet-4-6"):
-		return maxTokensSonnetOpus
+		return MaxTokensSonnetOpus
 	case strings.HasPrefix(id, "claude-opus-4-"):
-		return maxTokensSonnetOpus
+		return MaxTokensSonnetOpus
 	case strings.HasPrefix(id, "claude-haiku-4-5"):
-		return maxTokensHaiku
+		return MaxTokensHaiku
 	default:
-		return maxTokensFloor
+		return MaxTokensFloor
 	}
 }
 
