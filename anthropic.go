@@ -82,8 +82,8 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 		client = newAPIClient(cfg)
 	}
 
-	// max_tokens precedence: a per-request Config.MaxOutputTokens override wins
-	// in convertRequest; a deployment-level Config.DefaultMaxTokens wins here;
+	// max_tokens precedence: a per-request GenerateContentConfig.MaxOutputTokens
+	// override wins in convertRequest; a deployment-level Config.DefaultMaxTokens wins here;
 	// otherwise fall back to the model's ceiling. Resolving once at construction
 	// is sufficient because the model name is fixed per instance.
 	maxTokens := cfg.DefaultMaxTokens

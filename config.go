@@ -71,7 +71,7 @@ type Config struct {
 	// If not provided, it defaults to the model's output ceiling (see
 	// converters.DefaultMaxTokensForModel): 128000 for Sonnet 4.6 and Opus
 	// 4.x, 64000 for Haiku 4.5 and unrecognised models. A per-request
-	// Config.MaxOutputTokens still overrides this.
+	// GenerateContentConfig.MaxOutputTokens still overrides this.
 	DefaultMaxTokens int
 
 	BaseURL string
