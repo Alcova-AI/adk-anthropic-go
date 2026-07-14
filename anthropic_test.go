@@ -20,7 +20,14 @@ import (
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
+
+	"github.com/Alcova-AI/adk-anthropic-go/v2/converters"
 )
+
+// testMaxTokens is an arbitrary non-zero max_tokens for constructing model
+// fixtures in tests that don't exercise token-limit behaviour. Tests that do
+// assert on the resolved ceiling use converters.MaxTokens* directly.
+const testMaxTokens = 64000
 
 func TestNewModel_ConfigBehavior(t *testing.T) {
 	tests := []struct {
@@ -40,12 +47,14 @@ func TestNewModel_ConfigBehavior(t *testing.T) {
 			wantVariant:   VariantAnthropicAPI,
 		},
 		{
-			name: "default_max_tokens",
+			// No explicit DefaultMaxTokens: falls back to the per-model ceiling.
+			// claude-sonnet-4-20250514 isn't in the table, so it gets the floor.
+			name: "default_max_tokens_falls_back_to_model_ceiling",
 			cfg: &Config{
 				APIKey:  "test-api-key",
 				Variant: VariantAnthropicAPI,
 			},
-			wantMaxTokens: defaultMaxTokens,
+			wantMaxTokens: converters.MaxTokensFloor,
 			wantVariant:   VariantAnthropicAPI,
 		},
 	}
@@ -101,7 +110,7 @@ func TestConvertRequest_VertexAI_SetsOutputConfig(t *testing.T) {
 	m := &anthropicModel{
 		name:             "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
-		defaultMaxTokens: defaultMaxTokens,
+		defaultMaxTokens: testMaxTokens,
 	}
 
 	schema := &genai.Schema{
@@ -136,7 +145,7 @@ func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse(t *testin
 	m := &anthropicModel{
 		name:             "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
-		defaultMaxTokens: defaultMaxTokens,
+		defaultMaxTokens: testMaxTokens,
 	}
 
 	// Top-level object, a nested object property, and an array of objects —
@@ -193,7 +202,7 @@ func TestConvertRequest_VertexAI_TransformsUnsupportedSchemaConstraints(t *testi
 	m := &anthropicModel{
 		name:             "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
-		defaultMaxTokens: defaultMaxTokens,
+		defaultMaxTokens: testMaxTokens,
 	}
 
 	minimum, maximum := 1.0, 100.0
@@ -297,7 +306,7 @@ func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse_AnyOf(t *
 	m := &anthropicModel{
 		name:             "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
-		defaultMaxTokens: defaultMaxTokens,
+		defaultMaxTokens: testMaxTokens,
 	}
 
 	// An object branch inside anyOf. SchemaToMap stores anyOf as
@@ -350,7 +359,7 @@ func TestConvertRequest_DirectAPI_SetsOutputConfig(t *testing.T) {
 	m := &anthropicModel{
 		name:             "claude-haiku-4-5-20251001",
 		variant:          VariantAnthropicAPI,
-		defaultMaxTokens: defaultMaxTokens,
+		defaultMaxTokens: testMaxTokens,
 	}
 
 	schema := &genai.Schema{
@@ -419,7 +428,7 @@ func TestConvertRequest_DefaultsToAdaptiveOnCapableModel(t *testing.T) {
 				// Adaptive-capable model — unversioned SDK alias.
 				name:             "claude-sonnet-4-6",
 				variant:          VariantAnthropicAPI,
-				defaultMaxTokens: defaultMaxTokens,
+				defaultMaxTokens: testMaxTokens,
 			}
 
 			params, err := m.convertRequest(tc.req)
@@ -444,7 +453,7 @@ func TestConvertRequest_NilConfigLeavesThinkingOffOnNonAdaptive(t *testing.T) {
 		// Manual-only model — adaptive is not supported.
 		name:             "claude-haiku-4-5",
 		variant:          VariantAnthropicAPI,
-		defaultMaxTokens: defaultMaxTokens,
+		defaultMaxTokens: testMaxTokens,
 	}
 
 	req := &model.LLMRequest{
@@ -563,7 +572,7 @@ func TestConvertRequest_ForcedToolUseDropsThinking(t *testing.T) {
 			m := &anthropicModel{
 				name:             tc.modelName,
 				variant:          VariantAnthropicAPI,
-				defaultMaxTokens: defaultMaxTokens,
+				defaultMaxTokens: testMaxTokens,
 			}
 
 			req := &model.LLMRequest{
@@ -631,7 +640,7 @@ func TestConvertRequest_AutoToolUseKeepsThinking(t *testing.T) {
 			m := &anthropicModel{
 				name:             "claude-sonnet-4-6",
 				variant:          VariantAnthropicAPI,
-				defaultMaxTokens: defaultMaxTokens,
+				defaultMaxTokens: testMaxTokens,
 			}
 
 			req := &model.LLMRequest{

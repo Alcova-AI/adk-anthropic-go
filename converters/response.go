@@ -67,6 +67,79 @@ func MessageToLLMResponse(msg *anthropic.Message) (*model.LLMResponse, error) {
 	return resp, nil
 }
 
+// InterruptedContent holds what could be salvaged from a message whose
+// generation was cut off mid-flight (typically at the max_tokens ceiling). The
+// intact content blocks are converted to genai parts in stream order; the
+// trailing tool call whose input JSON was truncated is reported separately as
+// data rather than converted, because its input is not valid JSON.
+type InterruptedContent struct {
+	Parts        []*genai.Part
+	ToolName     string
+	ToolID       string
+	PartialInput string
+}
+
+// SalvageInterruptedMessage extracts the content that survived an interrupted
+// generation. Intact blocks (thinking with signatures, completed text, and
+// completed tool_use blocks with valid JSON input) are converted to genai
+// parts in stream order. A tool_use block whose Input is not valid JSON is the
+// point of interruption: its name, id, and partial input are captured on the
+// returned struct and the block itself is skipped. Blocks that fail conversion
+// are skipped rather than aborting the salvage — this runs on an error path
+// where preserving what is convertible matters more than completeness.
+func SalvageInterruptedMessage(msg *anthropic.Message) InterruptedContent {
+	var out InterruptedContent
+	if msg == nil {
+		return out
+	}
+
+	for _, block := range msg.Content {
+		// Read the interruption off the flattened ContentBlockUnion fields, not
+		// via AsToolUse(): the SDK accumulator keeps ContentBlockUnion.Input
+		// current through input_json_delta events but only refreshes the
+		// variant's backing JSON on content_block_stop — which never fires for
+		// the block cut off at the ceiling.
+		if isIncompleteToolUse(block) {
+			out.ToolName = block.Name
+			out.ToolID = block.ID
+			out.PartialInput = string(block.Input)
+			continue
+		}
+
+		part, err := ContentBlockToGenaiPart(block)
+		if err != nil || part == nil {
+			continue
+		}
+		out.Parts = append(out.Parts, part)
+	}
+
+	return out
+}
+
+// HasIncompleteToolInput reports whether any tool_use block in the message
+// carries input that isn't valid JSON — the signature of a tool call cut off
+// mid-generation. Used to detect an interruption even when the SDK accumulator
+// didn't surface an error.
+func HasIncompleteToolInput(msg *anthropic.Message) bool {
+	if msg == nil {
+		return false
+	}
+	for _, block := range msg.Content {
+		if isIncompleteToolUse(block) {
+			return true
+		}
+	}
+	return false
+}
+
+// isIncompleteToolUse reports whether a content block is a tool_use block whose
+// accumulated input JSON is truncated (not valid JSON). It reads the flattened
+// ContentBlockUnion fields because those are what the SDK accumulator keeps
+// current for an in-progress block.
+func isIncompleteToolUse(block anthropic.ContentBlockUnion) bool {
+	return block.Type == "tool_use" && !json.Valid(block.Input)
+}
+
 // ContentBlockToGenaiPart converts an Anthropic ContentBlockUnion to a genai.Part.
 func ContentBlockToGenaiPart(block anthropic.ContentBlockUnion) (*genai.Part, error) {
 	switch variant := block.AsAny().(type) {

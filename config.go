@@ -68,7 +68,10 @@ type Config struct {
 
 	// DefaultMaxTokens is the default maximum number of tokens to generate.
 	// Anthropic requires max_tokens to be explicitly set for all requests.
-	// If not provided, defaults to 16384.
+	// If not provided, it defaults to the model's output ceiling (see
+	// converters.DefaultMaxTokensForModel): 128000 for Sonnet 4.6 and Opus
+	// 4.x, 64000 for Haiku 4.5 and unrecognised models. A per-request
+	// GenerateContentConfig.MaxOutputTokens still overrides this.
 	DefaultMaxTokens int
 
 	BaseURL string

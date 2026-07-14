@@ -29,8 +29,6 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-const defaultMaxTokens = 16384
-
 type anthropicModel struct {
 	client           anthropic.Client
 	name             anthropic.Model
@@ -84,9 +82,13 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 		client = newAPIClient(cfg)
 	}
 
+	// max_tokens precedence: a per-request GenerateContentConfig.MaxOutputTokens
+	// override wins in convertRequest; a deployment-level Config.DefaultMaxTokens wins here;
+	// otherwise fall back to the model's ceiling. Resolving once at construction
+	// is sufficient because the model name is fixed per instance.
 	maxTokens := cfg.DefaultMaxTokens
 	if maxTokens == 0 {
-		maxTokens = defaultMaxTokens
+		maxTokens = converters.DefaultMaxTokensForModel(modelName)
 	}
 
 	return &anthropicModel{
@@ -189,9 +191,14 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 		for stream.Next() {
 			event := stream.Current()
 
-			// Accumulate the message
+			// Accumulate the message. A failure here is almost always the
+			// SDK's message_stop re-marshal choking on a tool call whose input
+			// JSON was truncated at the max_tokens ceiling. Surface that as a
+			// typed OutputInterruptedError carrying whatever survived; any other
+			// accumulation failure keeps its original error so it isn't
+			// misdiagnosed as an interruption.
 			if err := message.Accumulate(event); err != nil {
-				yield(nil, fmt.Errorf("failed to accumulate message: %w", err))
+				yield(nil, classifyAccumulateError(&message, err))
 				return
 			}
 
@@ -216,6 +223,18 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 
 		if err := stream.Err(); err != nil {
 			yield(nil, fmt.Errorf("stream error: %w", err))
+			return
+		}
+
+		// Belt-and-braces: the stream can complete without Accumulate erroring
+		// yet still carry a tool call truncated at the ceiling (invalid input
+		// JSON). Converting that normally would fail or emit a broken tool
+		// call, so report the interruption instead. A max_tokens stop with an
+		// otherwise-valid message (e.g. truncated mid-thinking) is NOT an
+		// interruption for our purposes — it converts normally below and the
+		// harness reacts off the mapped max_tokens FinishReason.
+		if message.StopReason == anthropic.StopReasonMaxTokens && converters.HasIncompleteToolInput(&message) {
+			yield(nil, newOutputInterruptedError(&message, nil))
 			return
 		}
 
