@@ -119,7 +119,8 @@ type Config struct {
 	// Backend variant: VariantAnthropicAPI or VariantVertexAI
 	Variant string
 
-	// Default max tokens (default: 16384)
+	// Default max tokens (default: the model's output ceiling —
+	// 128000 for Sonnet 4.6 / Opus 4.x, 64000 for Haiku 4.5 and unknown models)
 	DefaultMaxTokens int
 }
 ```

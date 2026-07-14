@@ -29,8 +29,6 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-const defaultMaxTokens = 16384
-
 type anthropicModel struct {
 	client           anthropic.Client
 	name             anthropic.Model
@@ -84,9 +82,13 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 		client = newAPIClient(cfg)
 	}
 
+	// max_tokens precedence: a per-request Config.MaxOutputTokens override wins
+	// in convertRequest; a deployment-level Config.DefaultMaxTokens wins here;
+	// otherwise fall back to the model's ceiling. Resolving once at construction
+	// is sufficient because the model name is fixed per instance.
 	maxTokens := cfg.DefaultMaxTokens
 	if maxTokens == 0 {
-		maxTokens = defaultMaxTokens
+		maxTokens = converters.DefaultMaxTokensForModel(modelName)
 	}
 
 	return &anthropicModel{

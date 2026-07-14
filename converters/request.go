@@ -547,6 +547,52 @@ func enabledThinking(budget int64, includeThoughts bool) anthropic.ThinkingConfi
 	}
 }
 
+// Per-model default max_tokens ceilings. max_tokens is a *ceiling*, not a
+// target: Anthropic requires it on every request, whereas Gemini treats an
+// unset limit as the model maximum. Defaulting each model to its real output
+// ceiling converges the two providers' semantics — callers get the model's
+// full output budget unless they deliberately cap it. Adaptive thinking draws
+// from this same budget, so a ceiling set too low truncates tool calls
+// mid-generation (the failure this table exists to prevent). The table is
+// static because the Models API that would report these limits is unavailable
+// on Vertex AI.
+const (
+	maxTokensSonnetOpus = 128000
+	maxTokensHaiku      = 64000
+	// maxTokensFloor is the conservative default for models we don't recognise.
+	maxTokensFloor = 64000
+)
+
+// DefaultMaxTokensForModel returns the default max_tokens ceiling for a model
+// when the caller hasn't set one explicitly. It matches on the normalised
+// model id (lower-cased, Vertex-style dated `@` suffix stripped) so both the
+// direct-API aliases (claude-sonnet-4-6) and Vertex dated ids
+// (claude-sonnet-4-6@20250101) resolve to the same ceiling. Unrecognised
+// models fall back to the conservative floor.
+func DefaultMaxTokensForModel(model anthropic.Model) int {
+	id := normalizeModelID(model)
+	switch {
+	case strings.HasPrefix(id, "claude-sonnet-4-6"):
+		return maxTokensSonnetOpus
+	case strings.HasPrefix(id, "claude-opus-4-"):
+		return maxTokensSonnetOpus
+	case strings.HasPrefix(id, "claude-haiku-4-5"):
+		return maxTokensHaiku
+	default:
+		return maxTokensFloor
+	}
+}
+
+// normalizeModelID lower-cases a model id and strips any Vertex-style dated
+// `@` suffix, so prefix matching is tolerant of both id styles.
+func normalizeModelID(model anthropic.Model) string {
+	id := strings.ToLower(string(model))
+	if i := strings.IndexByte(id, '@'); i >= 0 {
+		id = id[:i]
+	}
+	return id
+}
+
 // supportsAdaptiveThinking reports whether `model` accepts adaptive thinking
 // (thinking: {type: "adaptive"}). Matches against the SDK's canonical
 // unversioned aliases — when Anthropic ships a new adaptive-capable model
