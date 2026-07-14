@@ -1,5 +1,9 @@
 # Changelog
 
+## [v2.0.5] - Restore safe default max tokens
+
+- Restore the transport-independent `max_tokens` default to 16384. The v2.0.3 model-ceiling defaults caused Anthropic's Go SDK to reject non-streaming requests before sending them because 64000 and 128000 tokens exceed its ten-minute non-streaming estimate. Streaming callers that need larger outputs should set `GenerateContentConfig.MaxOutputTokens` or `Config.DefaultMaxTokens` explicitly.
+
 ## [v2.0.4] - Drop hidden thoughts from user messages
 
 - Prevent Anthropic 400 errors when ADK converts foreign-agent output to user context by dropping hidden thought parts only from user-role messages. Assistant-role signed and redacted thinking continuity remains unchanged.

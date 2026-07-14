@@ -1717,36 +1717,6 @@ func TestUsageToMetadata_CacheTokens(t *testing.T) {
 	})
 }
 
-func TestDefaultMaxTokensForModel(t *testing.T) {
-	cases := []struct {
-		name  string
-		model anthropic.Model
-		want  int
-	}{
-		{"sonnet_4_6", "claude-sonnet-4-6", 128000},
-		{"sonnet_4_6_dated", "claude-sonnet-4-6-20250101", 128000},
-		{"sonnet_4_6_vertex_suffix", "claude-sonnet-4-6@20250101", 128000},
-		{"opus_4_6", "claude-opus-4-6", 128000},
-		{"opus_4_7", "claude-opus-4-7", 128000},
-		{"opus_4_8", "claude-opus-4-8", 128000},
-		{"opus_4_8_vertex_suffix", "claude-opus-4-8@20260101", 128000},
-		{"haiku_4_5", "claude-haiku-4-5", 64000},
-		{"haiku_4_5_dated", "claude-haiku-4-5-20251001", 64000},
-		{"uppercase_normalised", "Claude-Sonnet-4-6@20250101", 128000},
-		{"unknown_sonnet_4", "claude-sonnet-4-20250514", 64000},
-		{"unknown_future_model", "claude-something-9", 64000},
-		{"empty", "", 64000},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := converters.DefaultMaxTokensForModel(tc.model); got != tc.want {
-				t.Errorf("DefaultMaxTokensForModel(%q) = %d, want %d", tc.model, got, tc.want)
-			}
-		})
-	}
-}
-
 // truncatedToolMessage builds an accumulated message whose trailing tool_use
 // block was cut off mid-input: a signed thinking block, a completed text
 // block, a completed tool call with valid input, then a tool call whose

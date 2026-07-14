@@ -18,15 +18,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
-
-	"github.com/Alcova-AI/adk-anthropic-go/v2/converters"
 )
 
 // testMaxTokens is an arbitrary non-zero max_tokens for constructing model
-// fixtures in tests that don't exercise token-limit behaviour. Tests that do
-// assert on the resolved ceiling use converters.MaxTokens* directly.
+// fixtures in tests that don't exercise token-limit behaviour.
 const testMaxTokens = 64000
 
 func TestNewModel_ConfigBehavior(t *testing.T) {
@@ -47,14 +45,12 @@ func TestNewModel_ConfigBehavior(t *testing.T) {
 			wantVariant:   VariantAnthropicAPI,
 		},
 		{
-			// No explicit DefaultMaxTokens: falls back to the per-model ceiling.
-			// claude-sonnet-4-20250514 isn't in the table, so it gets the floor.
-			name: "default_max_tokens_falls_back_to_model_ceiling",
+			name: "default_max_tokens_is_safe_for_non_streaming",
 			cfg: &Config{
 				APIKey:  "test-api-key",
 				Variant: VariantAnthropicAPI,
 			},
-			wantMaxTokens: converters.MaxTokensFloor,
+			wantMaxTokens: defaultMaxTokens,
 			wantVariant:   VariantAnthropicAPI,
 		},
 	}
@@ -78,6 +74,21 @@ func TestNewModel_ConfigBehavior(t *testing.T) {
 				t.Errorf("variant = %q, want %q", am.variant, tt.wantVariant)
 			}
 		})
+	}
+}
+
+func TestNewModel_DefaultMaxTokensSupportsNonStreaming(t *testing.T) {
+	model, err := NewModel(t.Context(), anthropic.ModelClaudeHaiku4_5, &Config{
+		APIKey:  "test-api-key",
+		Variant: VariantAnthropicAPI,
+	})
+	if err != nil {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	maxTokens := model.(*anthropicModel).defaultMaxTokens
+	if _, err := anthropic.CalculateNonStreamingTimeout(maxTokens, anthropic.ModelClaudeHaiku4_5, nil); err != nil {
+		t.Fatalf("default max_tokens %d is incompatible with non-streaming requests: %v", maxTokens, err)
 	}
 }
 
