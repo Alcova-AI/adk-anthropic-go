@@ -19,6 +19,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"google.golang.org/genai"
+
+	"github.com/Alcova-AI/adk-anthropic-go/v2/converters"
 )
 
 // OutputInterruptedError reports that the model's output was cut off before
@@ -69,3 +71,26 @@ func (e *OutputInterruptedError) Error() string {
 }
 
 func (e *OutputInterruptedError) Unwrap() error { return e.Cause }
+
+// newOutputInterruptedError builds an OutputInterruptedError from an
+// interrupted message, salvaging the intact content blocks and the truncated
+// tool call's details. cause is the underlying error that surfaced the
+// interruption (the SDK accumulator failure), or nil when the interruption was
+// detected directly from the stop reason.
+func newOutputInterruptedError(msg *anthropic.Message, cause error) *OutputInterruptedError {
+	salvaged := converters.SalvageInterruptedMessage(msg)
+
+	var stopReason anthropic.StopReason
+	if msg != nil {
+		stopReason = msg.StopReason
+	}
+
+	return &OutputInterruptedError{
+		StopReason:   stopReason,
+		Parts:        salvaged.Parts,
+		ToolName:     salvaged.ToolName,
+		ToolID:       salvaged.ToolID,
+		PartialInput: salvaged.PartialInput,
+		Cause:        cause,
+	}
+}

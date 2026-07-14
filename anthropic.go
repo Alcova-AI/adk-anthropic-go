@@ -191,9 +191,13 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 		for stream.Next() {
 			event := stream.Current()
 
-			// Accumulate the message
+			// Accumulate the message. A failure here is almost always the
+			// SDK's message_stop re-marshal choking on a tool call whose input
+			// JSON was truncated at the max_tokens ceiling. Surface it as a
+			// typed OutputInterruptedError carrying whatever survived, instead
+			// of an opaque wrapped error the harness can't act on.
 			if err := message.Accumulate(event); err != nil {
-				yield(nil, fmt.Errorf("failed to accumulate message: %w", err))
+				yield(nil, newOutputInterruptedError(&message, err))
 				return
 			}
 
@@ -218,6 +222,18 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 
 		if err := stream.Err(); err != nil {
 			yield(nil, fmt.Errorf("stream error: %w", err))
+			return
+		}
+
+		// Belt-and-braces: the stream can complete without Accumulate erroring
+		// yet still carry a tool call truncated at the ceiling (invalid input
+		// JSON). Converting that normally would fail or emit a broken tool
+		// call, so report the interruption instead. A max_tokens stop with an
+		// otherwise-valid message (e.g. truncated mid-thinking) is NOT an
+		// interruption for our purposes — it converts normally below and the
+		// harness reacts off the mapped max_tokens FinishReason.
+		if message.StopReason == anthropic.StopReasonMaxTokens && converters.HasIncompleteToolInput(&message) {
+			yield(nil, newOutputInterruptedError(&message, nil))
 			return
 		}
 

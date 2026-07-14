@@ -1674,3 +1674,125 @@ func TestDefaultMaxTokensForModel(t *testing.T) {
 	}
 }
 
+// truncatedToolMessage builds an accumulated message whose trailing tool_use
+// block was cut off mid-input: a signed thinking block, a completed text
+// block, a completed tool call with valid input, then a tool call whose
+// accumulated input JSON is incomplete. This mirrors the state the streaming
+// loop holds when Accumulate fails on message_stop — the SDK keeps the
+// flattened ContentBlockUnion.Input current through input_json_delta events but
+// never refreshes it via content_block_stop for the truncated block, so we set
+// the invalid input on the exported field directly.
+func truncatedToolMessage(t *testing.T) *anthropic.Message {
+	t.Helper()
+	const msgJSON = `{
+		"content": [
+			{"type": "thinking", "thinking": "weighing options", "signature": "c2ln"},
+			{"type": "text", "text": "Saving the file now."},
+			{"type": "tool_use", "id": "toolu_ok", "name": "lookup", "input": {"q": "done"}},
+			{"type": "tool_use", "id": "toolu_cut", "name": "save_file", "input": {}}
+		],
+		"stop_reason": "max_tokens",
+		"usage": {"input_tokens": 5, "output_tokens": 50}
+	}`
+
+	var msg anthropic.Message
+	if err := msg.UnmarshalJSON([]byte(msgJSON)); err != nil {
+		t.Fatalf("failed to unmarshal message: %v", err)
+	}
+	// Overwrite the trailing tool call's input with truncated (invalid) JSON.
+	msg.Content[3].Input = json.RawMessage(`{"path": "/reports/summ`)
+	return &msg
+}
+
+func TestSalvageInterruptedMessage_TruncatedToolCall(t *testing.T) {
+	msg := truncatedToolMessage(t)
+
+	got := converters.SalvageInterruptedMessage(msg)
+
+	if got.ToolName != "save_file" {
+		t.Errorf("ToolName = %q, want %q", got.ToolName, "save_file")
+	}
+	if got.ToolID != "toolu_cut" {
+		t.Errorf("ToolID = %q, want %q", got.ToolID, "toolu_cut")
+	}
+	if got.PartialInput != `{"path": "/reports/summ` {
+		t.Errorf("PartialInput = %q, want the truncated fragment", got.PartialInput)
+	}
+
+	// Salvaged parts, in stream order: thinking, text, the completed tool call.
+	// The truncated tool call must NOT appear as a part.
+	if len(got.Parts) != 3 {
+		t.Fatalf("len(Parts) = %d, want 3 (thinking, text, completed tool call)", len(got.Parts))
+	}
+	if !got.Parts[0].Thought || got.Parts[0].Text != "weighing options" {
+		t.Errorf("Parts[0] = %+v, want thinking part 'weighing options'", got.Parts[0])
+	}
+	if got.Parts[1].Text != "Saving the file now." {
+		t.Errorf("Parts[1].Text = %q, want the completed text", got.Parts[1].Text)
+	}
+	fc := got.Parts[2].FunctionCall
+	if fc == nil || fc.Name != "lookup" || fc.ID != "toolu_ok" {
+		t.Errorf("Parts[2] = %+v, want completed tool call 'lookup'", got.Parts[2])
+	}
+	for _, p := range got.Parts {
+		if p.FunctionCall != nil && p.FunctionCall.ID == "toolu_cut" {
+			t.Error("truncated tool call must not appear in salvaged Parts")
+		}
+	}
+}
+
+func TestHasIncompleteToolInput(t *testing.T) {
+	t.Run("truncated_tool_call", func(t *testing.T) {
+		if !converters.HasIncompleteToolInput(truncatedToolMessage(t)) {
+			t.Error("HasIncompleteToolInput = false, want true for a truncated tool call")
+		}
+	})
+
+	t.Run("valid_message_mid_thinking", func(t *testing.T) {
+		// max_tokens truncation that landed mid-thinking: the message is valid
+		// (no tool block), so it is NOT an interruption we salvage — it
+		// converts normally with a max_tokens finish reason.
+		const msgJSON = `{
+			"content": [{"type": "thinking", "thinking": "still reasoning", "signature": "c2ln"}],
+			"stop_reason": "max_tokens",
+			"usage": {"input_tokens": 5, "output_tokens": 50}
+		}`
+		var msg anthropic.Message
+		if err := msg.UnmarshalJSON([]byte(msgJSON)); err != nil {
+			t.Fatalf("failed to unmarshal message: %v", err)
+		}
+
+		if converters.HasIncompleteToolInput(&msg) {
+			t.Error("HasIncompleteToolInput = true, want false for a valid mid-thinking message")
+		}
+
+		resp, err := converters.MessageToLLMResponse(&msg)
+		if err != nil {
+			t.Fatalf("MessageToLLMResponse() error = %v", err)
+		}
+		if resp.FinishReason != genai.FinishReasonMaxTokens {
+			t.Errorf("FinishReason = %v, want FinishReasonMaxTokens", resp.FinishReason)
+		}
+	})
+
+	t.Run("completed_tool_call", func(t *testing.T) {
+		const msgJSON = `{
+			"content": [{"type": "tool_use", "id": "toolu_ok", "name": "lookup", "input": {"q": "done"}}],
+			"stop_reason": "tool_use",
+			"usage": {"input_tokens": 5, "output_tokens": 50}
+		}`
+		var msg anthropic.Message
+		if err := msg.UnmarshalJSON([]byte(msgJSON)); err != nil {
+			t.Fatalf("failed to unmarshal message: %v", err)
+		}
+		if converters.HasIncompleteToolInput(&msg) {
+			t.Error("HasIncompleteToolInput = true, want false for a completed tool call")
+		}
+	})
+
+	t.Run("nil_message", func(t *testing.T) {
+		if converters.HasIncompleteToolInput(nil) {
+			t.Error("HasIncompleteToolInput(nil) = true, want false")
+		}
+	})
+}
