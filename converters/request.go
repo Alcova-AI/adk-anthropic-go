@@ -106,6 +106,13 @@ func contentToMessage(content *genai.Content) (*anthropic.MessageParam, error) {
 		if part == nil {
 			continue
 		}
+		// TODO: Remove this compatibility guard once the minimum adk-go version
+		// includes https://github.com/google/adk-go/pull/1104. Older versions can
+		// retain a foreign agent's hidden thoughts while changing its role to user,
+		// but Anthropic only accepts thinking blocks in assistant messages.
+		if role == anthropic.MessageParamRoleUser && part.Thought {
+			continue
+		}
 		block, err := PartToContentBlock(part)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert part: %w", err)
