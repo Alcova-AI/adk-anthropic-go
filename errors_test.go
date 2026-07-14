@@ -149,3 +149,60 @@ func TestNewOutputInterruptedError_MidThinkingNoToolFields(t *testing.T) {
 		t.Errorf("Parts = %+v, want a single salvaged thinking part", err.Parts)
 	}
 }
+
+// midThinkingValidStream completes a thinking block and stops at the max_tokens
+// ceiling without any tool call — a valid message that Accumulate handles
+// cleanly.
+var midThinkingValidStream = []string{
+	`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-6","content":[],"stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}`,
+	`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+	`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"still reasoning"}}`,
+	`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"c2ln"}}`,
+	`{"type":"content_block_stop","index":0}`,
+	`{"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":50}}`,
+	`{"type":"message_stop"}`,
+}
+
+func TestClassifyAccumulateError(t *testing.T) {
+	t.Run("truncated_tool_call_is_interruption", func(t *testing.T) {
+		msg, accErr := accumulateEvents(t, interruptedToolCallStream)
+		if accErr == nil {
+			t.Fatal("expected Accumulate to fail on the truncated tool input, got nil")
+		}
+
+		err := classifyAccumulateError(msg, accErr)
+
+		var interrupted *OutputInterruptedError
+		if !errors.As(err, &interrupted) {
+			t.Fatalf("want *OutputInterruptedError, got %T (%v)", err, err)
+		}
+		if interrupted.ToolName != "save_file" {
+			t.Errorf("ToolName = %q, want %q", interrupted.ToolName, "save_file")
+		}
+		if !errors.Is(err, accErr) {
+			t.Error("errors.Is(err, accErr) = false, want true via Unwrap")
+		}
+	})
+
+	t.Run("non_truncation_error_is_preserved", func(t *testing.T) {
+		// A valid message with no incomplete tool call: an Accumulate failure
+		// here is something other than a truncated tool call (e.g. an
+		// unexpected event shape) and must not be relabelled as an
+		// interruption.
+		msg, accErr := accumulateEvents(t, midThinkingValidStream)
+		if accErr != nil {
+			t.Fatalf("Accumulate should succeed on a valid message, got %v", accErr)
+		}
+
+		sentinel := errors.New("unexpected event shape")
+		err := classifyAccumulateError(msg, sentinel)
+
+		var interrupted *OutputInterruptedError
+		if errors.As(err, &interrupted) {
+			t.Fatal("a valid message must not be classified as *OutputInterruptedError")
+		}
+		if !errors.Is(err, sentinel) {
+			t.Error("original cause must be preserved via wrapping")
+		}
+	})
+}

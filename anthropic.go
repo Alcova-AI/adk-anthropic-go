@@ -193,11 +193,12 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 
 			// Accumulate the message. A failure here is almost always the
 			// SDK's message_stop re-marshal choking on a tool call whose input
-			// JSON was truncated at the max_tokens ceiling. Surface it as a
-			// typed OutputInterruptedError carrying whatever survived, instead
-			// of an opaque wrapped error the harness can't act on.
+			// JSON was truncated at the max_tokens ceiling. Surface that as a
+			// typed OutputInterruptedError carrying whatever survived; any other
+			// accumulation failure keeps its original error so it isn't
+			// misdiagnosed as an interruption.
 			if err := message.Accumulate(event); err != nil {
-				yield(nil, newOutputInterruptedError(&message, err))
+				yield(nil, classifyAccumulateError(&message, err))
 				return
 			}
 

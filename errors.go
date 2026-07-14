@@ -94,3 +94,18 @@ func newOutputInterruptedError(msg *anthropic.Message, cause error) *OutputInter
 		Cause:        cause,
 	}
 }
+
+// classifyAccumulateError maps a message.Accumulate failure to the error the
+// stream should surface. Accumulate almost always fails because the SDK
+// re-marshalled a tool call whose input JSON was truncated at the max_tokens
+// ceiling — a genuine interruption. But it can also fail for unrelated reasons
+// (e.g. an unexpected event shape), and labelling those *OutputInterruptedError
+// would hide the real cause from callers doing errors.As. Only return the
+// typed error when the partial message actually shows a truncated tool call;
+// otherwise wrap the original error unchanged.
+func classifyAccumulateError(msg *anthropic.Message, cause error) error {
+	if converters.HasIncompleteToolInput(msg) {
+		return newOutputInterruptedError(msg, cause)
+	}
+	return fmt.Errorf("failed to accumulate message: %w", cause)
+}
