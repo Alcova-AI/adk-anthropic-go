@@ -213,6 +213,79 @@ func TestContentsToMessages_PreservesRedactedThinkingBoundary(t *testing.T) {
 	}
 }
 
+func TestContentsToMessages_DropsThoughtsFromUserMessages(t *testing.T) {
+	var redactedBlock anthropic.ContentBlockUnion
+	if err := redactedBlock.UnmarshalJSON([]byte(`{
+		"type": "redacted_thinking",
+		"data": "opaque-redacted-data"
+	}`)); err != nil {
+		t.Fatalf("failed to unmarshal redacted thinking block: %v", err)
+	}
+	redactedPart, err := converters.ContentBlockToGenaiPart(redactedBlock)
+	if err != nil {
+		t.Fatalf("ContentBlockToGenaiPart() error = %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		thought *genai.Part
+	}{
+		{
+			name: "empty signed thought",
+			thought: &genai.Part{
+				Thought:          true,
+				ThoughtSignature: []byte("signature"),
+			},
+		},
+		{
+			name: "non-empty signed thought",
+			thought: &genai.Part{
+				Text:             "Hidden reasoning",
+				Thought:          true,
+				ThoughtSignature: []byte("signature"),
+			},
+		},
+		{
+			name:    "redacted thought",
+			thought: redactedPart,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			messages, err := converters.ContentsToMessages([]*genai.Content{
+				{
+					Role: "user",
+					Parts: []*genai.Part{
+						{Text: "For context: [researcher] said: relevant result"},
+						tt.thought,
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("ContentsToMessages() error = %v", err)
+			}
+
+			if len(messages) != 1 {
+				t.Fatalf("expected 1 message, got %d", len(messages))
+			}
+			if messages[0].Role != anthropic.MessageParamRoleUser {
+				t.Errorf("role = %q, want %q", messages[0].Role, anthropic.MessageParamRoleUser)
+			}
+			if len(messages[0].Content) != 1 {
+				t.Fatalf("expected only the context text block, got %d blocks", len(messages[0].Content))
+			}
+			textBlock := messages[0].Content[0].OfText
+			if textBlock == nil {
+				t.Fatal("user message does not contain the context text block")
+			}
+			if textBlock.Text != "For context: [researcher] said: relevant result" {
+				t.Errorf("text = %q, want the original context", textBlock.Text)
+			}
+		})
+	}
+}
+
 func TestThinkingBlock_RoundTripsThroughPersistedPart(t *testing.T) {
 	var responseBlock anthropic.ContentBlockUnion
 	if err := responseBlock.UnmarshalJSON([]byte(`{

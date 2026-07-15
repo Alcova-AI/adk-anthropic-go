@@ -1,5 +1,10 @@
 # Changelog
 
+## [v2.0.4] - Drop hidden thoughts from user messages
+
+- Prevent Anthropic 400 errors when ADK converts foreign-agent output to user context by dropping hidden thought parts only from user-role messages. Assistant-role signed and redacted thinking continuity remains unchanged.
+- This is a temporary compatibility guard for [google/adk-go#1104](https://github.com/google/adk-go/pull/1104) and can be removed once the minimum supported adk-go version includes that fix.
+
 ## [v2.0.3] - Model-aware max_tokens and interrupted-output detection
 
 - Default `max_tokens` per model instead of a flat 16384. Each model now defaults to its output ceiling — 128000 for Sonnet 4.6 and Opus 4.x, 64000 for Haiku 4.5 and unrecognised models — resolved from the model id (tolerant of Vertex-style dated `@` suffixes). `max_tokens` is a ceiling, not a target, so this gives callers the model's full output budget (converging with Gemini, which treats an unset limit as the model maximum) and stops adaptive thinking from sharing a budget so small it truncates tool calls mid-generation. A per-request `GenerateContentConfig.MaxOutputTokens` and deployment-level `Config.DefaultMaxTokens` still override it.
