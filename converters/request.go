@@ -321,18 +321,74 @@ func functionResponseToBlock(resp *genai.FunctionResponse) (*anthropic.ContentBl
 		return nil, fmt.Errorf("FunctionResponse.ID is required for tool call correlation (function: %s)", resp.Name)
 	}
 
-	// Convert the response to JSON string
-	var content string
+	var content []anthropic.ToolResultBlockParamContentUnion
 	if resp.Response != nil {
 		jsonBytes, err := json.Marshal(resp.Response)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal function response: %w", err)
 		}
-		content = string(jsonBytes)
+		content = append(content, anthropic.ToolResultBlockParamContentUnion{
+			OfText: &anthropic.TextBlockParam{Text: string(jsonBytes)},
+		})
 	}
 
-	block := anthropic.NewToolResultBlock(resp.ID, content, false)
+	for _, part := range resp.Parts {
+		converted, err := functionResponsePartToBlock(part)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert function response part: %w", err)
+		}
+		if converted != nil {
+			content = append(content, *converted)
+		}
+	}
+
+	block := anthropic.ContentBlockParamUnion{
+		OfToolResult: &anthropic.ToolResultBlockParam{
+			ToolUseID: resp.ID,
+			Content:   content,
+			IsError:   anthropic.Bool(false),
+		},
+	}
 	return &block, nil
+}
+
+func functionResponsePartToBlock(part *genai.FunctionResponsePart) (*anthropic.ToolResultBlockParamContentUnion, error) {
+	if part == nil {
+		return nil, nil
+	}
+
+	var block *anthropic.ContentBlockParamUnion
+	var err error
+	switch {
+	case part.InlineData != nil:
+		block, err = inlineDataToBlock(&genai.Blob{
+			Data:     part.InlineData.Data,
+			MIMEType: part.InlineData.MIMEType,
+		})
+	case part.FileData != nil:
+		block, err = fileDataToBlock(&genai.FileData{
+			FileURI:     part.FileData.FileURI,
+			MIMEType:    part.FileData.MIMEType,
+			DisplayName: part.FileData.DisplayName,
+		})
+	default:
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if block == nil {
+		return nil, nil
+	}
+
+	switch {
+	case block.OfImage != nil:
+		return &anthropic.ToolResultBlockParamContentUnion{OfImage: block.OfImage}, nil
+	case block.OfDocument != nil:
+		return &anthropic.ToolResultBlockParamContentUnion{OfDocument: block.OfDocument}, nil
+	default:
+		return nil, fmt.Errorf("unsupported function response content block")
+	}
 }
 
 // functionCallToBlock converts a FunctionCall to an Anthropic tool use block.

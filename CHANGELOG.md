@@ -1,5 +1,9 @@
 # Changelog
 
+## [v2.0.6] - Preserve function response media
+
+- Convert `FunctionResponse.Parts` into image and PDF content nested inside the matching Anthropic `tool_result`. Tool-returned media now stays correlated with its tool call instead of requiring separate user-message parts that can violate Anthropic's tool-result ordering rules.
+
 ## [v2.0.5] - Restore safe default max tokens
 
 - Restore the transport-independent `max_tokens` default to 16384. The v2.0.3 model-ceiling defaults caused Anthropic's Go SDK to reject non-streaming requests before sending them because 64000 and 128000 tokens exceed its ten-minute non-streaming estimate. Streaming callers that need larger outputs should set `GenerateContentConfig.MaxOutputTokens` or `Config.DefaultMaxTokens` explicitly.
