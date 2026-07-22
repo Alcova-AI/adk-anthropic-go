@@ -678,6 +678,89 @@ func TestFunctionResponseToBlock(t *testing.T) {
 	}
 }
 
+func TestFunctionResponseToBlock_PreservesInlineParts(t *testing.T) {
+	content := &genai.Content{
+		Role: "user",
+		Parts: []*genai.Part{{
+			FunctionResponse: &genai.FunctionResponse{
+				ID:       "call_123",
+				Name:     "read_file",
+				Response: map[string]any{"path": "/report.pdf"},
+				Parts: []*genai.FunctionResponsePart{
+					genai.NewFunctionResponsePartFromBytes([]byte("image"), "image/png"),
+					genai.NewFunctionResponsePartFromBytes([]byte("pdf"), "application/pdf"),
+					genai.NewFunctionResponsePartFromURI("https://example.com/image.png", "image/png"),
+				},
+			},
+		}},
+	}
+
+	messages, err := converters.ContentsToMessages([]*genai.Content{content})
+	if err != nil {
+		t.Fatalf("ContentsToMessages() error = %v", err)
+	}
+	if len(messages) != 1 || len(messages[0].Content) != 1 {
+		t.Fatalf("expected one message with one tool result, got %#v", messages)
+	}
+
+	result := messages[0].Content[0].OfToolResult
+	if result == nil {
+		t.Fatal("expected tool result block")
+	}
+	if len(result.Content) != 4 {
+		t.Fatalf("expected JSON, inline image, PDF, and URL image inside tool result, got %d blocks", len(result.Content))
+	}
+	if result.Content[0].OfText == nil || result.Content[0].OfText.Text != `{"path":"/report.pdf"}` {
+		t.Errorf("unexpected JSON result block: %#v", result.Content[0])
+	}
+	if result.Content[1].OfImage == nil || result.Content[1].OfImage.Source.OfBase64 == nil {
+		t.Errorf("expected inline image inside tool result, got %#v", result.Content[1])
+	}
+	if result.Content[2].OfDocument == nil || result.Content[2].OfDocument.Source.OfBase64 == nil {
+		t.Errorf("expected inline PDF inside tool result, got %#v", result.Content[2])
+	}
+	if result.Content[3].OfImage == nil || result.Content[3].OfImage.Source.OfURL == nil {
+		t.Errorf("expected URL image inside tool result, got %#v", result.Content[3])
+	}
+}
+
+func TestFunctionResponseToBlock_ParallelResultsStayContiguous(t *testing.T) {
+	content := &genai.Content{
+		Role: "user",
+		Parts: []*genai.Part{
+			{FunctionResponse: &genai.FunctionResponse{
+				ID:       "call_1",
+				Name:     "read_file",
+				Response: map[string]any{"path": "/one.png"},
+				Parts:    []*genai.FunctionResponsePart{genai.NewFunctionResponsePartFromBytes([]byte("one"), "image/png")},
+			}},
+			{FunctionResponse: &genai.FunctionResponse{
+				ID:       "call_2",
+				Name:     "read_file",
+				Response: map[string]any{"path": "/two.png"},
+				Parts:    []*genai.FunctionResponsePart{genai.NewFunctionResponsePartFromBytes([]byte("two"), "image/png")},
+			}},
+		},
+	}
+
+	messages, err := converters.ContentsToMessages([]*genai.Content{content})
+	if err != nil {
+		t.Fatalf("ContentsToMessages() error = %v", err)
+	}
+	if len(messages) != 1 || len(messages[0].Content) != 2 {
+		t.Fatalf("expected one message with two contiguous tool results, got %#v", messages)
+	}
+	for i, block := range messages[0].Content {
+		if block.OfToolResult == nil {
+			t.Errorf("content block %d is not a tool result: %#v", i, block)
+			continue
+		}
+		if len(block.OfToolResult.Content) != 2 || block.OfToolResult.Content[1].OfImage == nil {
+			t.Errorf("tool result %d does not contain its image: %#v", i, block.OfToolResult)
+		}
+	}
+}
+
 func TestFunctionResponseToBlock_RequiresID(t *testing.T) {
 	content := &genai.Content{
 		Role: "user",
