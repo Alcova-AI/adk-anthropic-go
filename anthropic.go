@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"iter"
 	"math/rand/v2"
+	"net/http"
 	"os"
 	"time"
 
@@ -321,15 +322,16 @@ func (m *anthropicModel) streamOnce(ctx context.Context, params anthropic.Messag
 	return nil
 }
 
-// isOverloadedStreamError reports whether err is Anthropic's overloaded_error.
-// Vertex delivers overload mid-stream as an SSE error event after a 200 OK,
-// so the *anthropic.Error carries StatusCode 200 — gate on the error
-// envelope's type, never the status code. A direct-API 529 that exhausted the
-// SDK's own HTTP retries also matches and gets retried again here; retrying
-// overload harder is deliberate.
+// isOverloadedStreamError reports whether err is Anthropic's overloaded_error
+// delivered mid-stream: an SSE error event arriving after the request already
+// succeeded at the HTTP level, so the *anthropic.Error carries StatusCode 200.
+// The status gate keeps this retry scoped to that gap — a direct-API 529 has
+// already spent the SDK's own HTTP-level retries and is not retried again.
 func isOverloadedStreamError(err error) bool {
 	var apierr *anthropic.Error
-	return errors.As(err, &apierr) && apierr.Type() == anthropic.ErrorTypeOverloadedError
+	return errors.As(err, &apierr) &&
+		apierr.Type() == anthropic.ErrorTypeOverloadedError &&
+		apierr.StatusCode == http.StatusOK
 }
 
 // streamRetryDelay returns the backoff before retrying the given (1-based)

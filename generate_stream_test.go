@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"google.golang.org/adk/v2/model"
 )
 
@@ -277,6 +278,41 @@ func TestGenerateStream_NoRetryOnNonOverloadedError(t *testing.T) {
 	}
 	if got := int(requests.Load()); got != 1 {
 		t.Errorf("requests = %d, want 1 — api_error must not retry", got)
+	}
+	if len(*sleeps) != 0 {
+		t.Errorf("sleeps = %d, want 0", len(*sleeps))
+	}
+}
+
+func TestGenerateStream_NoRetryOnDirectAPI529(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(529)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	m, sleeps := newStreamTestModel(t, srv.URL)
+	// Zero out the SDK's own HTTP-level retries so the request count isolates
+	// what the adapter adds on top of them.
+	m.client = anthropic.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL(srv.URL),
+		option.WithMaxRetries(0),
+	)
+
+	pairs := collect(t.Context(), m)
+
+	if len(pairs) != 1 || pairs[0].resp != nil {
+		t.Fatalf("pairs = %+v, want exactly one error pair", pairs)
+	}
+	var apierr *anthropic.Error
+	if !errors.As(pairs[0].err, &apierr) || apierr.Type() != anthropic.ErrorTypeOverloadedError {
+		t.Errorf("err = %v, want wrapped overloaded_error", pairs[0].err)
+	}
+	if got := int(requests.Load()); got != 1 {
+		t.Errorf("requests = %d, want 1 — a direct-API 529 already spent the SDK's retries and must not be retried again", got)
 	}
 	if len(*sleeps) != 0 {
 		t.Errorf("sleeps = %d, want 0", len(*sleeps))
