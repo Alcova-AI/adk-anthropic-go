@@ -16,9 +16,12 @@ package adkanthropic
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
+	"math/rand/v2"
 	"os"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -31,12 +34,26 @@ import (
 
 const defaultMaxTokens = 16384
 
+// Mid-stream overload retry policy. Vertex AI can accept a streaming request
+// (HTTP 200 at the header level) and then deliver overloaded_error as an SSE
+// error event; the SDK's HTTP-level retries never see it because the request
+// already "succeeded". Three attempts mirrors the SDK's own HTTP-level default
+// (MaxRetries=2) that covers the non-streaming path.
+const (
+	streamMaxAttempts    = 3
+	streamRetryBaseDelay = time.Second
+)
+
 type anthropicModel struct {
 	client           anthropic.Client
 	name             anthropic.Model
 	variant          string
 	defaultMaxTokens int
 	promptCaching    *PromptCachingConfig
+
+	// retrySleep waits between mid-stream overload retries. Overridable so
+	// tests can drop the delay; production always gets sleepWithContext.
+	retrySleep func(ctx context.Context, d time.Duration) error
 }
 
 // NewModel returns [model.LLM], backed by Anthropic Claude.
@@ -99,6 +116,7 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 		variant:          variant,
 		defaultMaxTokens: maxTokens,
 		promptCaching:    cfg.PromptCaching,
+		retrySleep:       sleepWithContext,
 	}, nil
 }
 
@@ -187,67 +205,157 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 			return
 		}
 
-		stream := m.client.Messages.NewStreaming(ctx, params)
-		message := anthropic.Message{}
+		// Directly-constructed models (tests) may leave retrySleep nil.
+		sleep := m.retrySleep
+		if sleep == nil {
+			sleep = sleepWithContext
+		}
 
-		for stream.Next() {
-			event := stream.Current()
-
-			// Accumulate the message. A failure here is almost always the
-			// SDK's message_stop re-marshal choking on a tool call whose input
-			// JSON was truncated at the max_tokens ceiling. Surface that as a
-			// typed OutputInterruptedError carrying whatever survived; any other
-			// accumulation failure keeps its original error so it isn't
-			// misdiagnosed as an interruption.
-			if err := message.Accumulate(event); err != nil {
-				yield(nil, classifyAccumulateError(&message, err))
+		// Retry mid-stream overloads, but only while nothing has been yielded:
+		// once a delta has reached the consumer, a retry would replay content
+		// it already has, so streamOnce handles those failures terminally and
+		// returns nil. This is a deliberate, narrow exception to the adapter's
+		// "no continuation decisions" rule — a pre-content retry is invisible
+		// to callers and carries no continuation semantics.
+		for attempt := 1; ; attempt++ {
+			streamErr := m.streamOnce(ctx, params, yield)
+			if streamErr == nil {
 				return
 			}
+			if attempt == streamMaxAttempts || !isOverloadedStreamError(streamErr) {
+				// Same wrap as before the retry existed, so caller-side
+				// handling and error grouping stay identical on exhaustion.
+				yield(nil, fmt.Errorf("stream error: %w", streamErr))
+				return
+			}
+			if err := sleep(ctx, streamRetryDelay(attempt)); err != nil {
+				// Cancelled during backoff: stop retrying and surface the
+				// overload we were retrying, in the usual wrapping.
+				yield(nil, fmt.Errorf("stream error: %w", streamErr))
+				return
+			}
+		}
+	}
+}
 
-			// Handle different event types for streaming
-			switch ev := event.AsAny().(type) {
-			case anthropic.ContentBlockDeltaEvent:
-				// Handle text deltas
-				switch delta := ev.Delta.AsAny().(type) {
-				case anthropic.TextDelta:
-					resp := converters.StreamDeltaToPartialResponse(delta.Text)
-					if !yield(resp, nil) {
-						return
-					}
-				case anthropic.ThinkingDelta:
-					resp := converters.StreamThinkingDeltaToPartialResponse(delta.Thinking)
-					if !yield(resp, nil) {
-						return
-					}
+// streamOnce runs a single streaming attempt, yielding partial deltas and the
+// final response. It returns a non-nil error only when the stream failed
+// before any partial content reached the consumer — the one window in which
+// generateStream may safely retry without duplicating output. Every other
+// outcome (success, consumer stop, post-content failure, interruption) is
+// fully handled here and signalled by a nil return.
+func (m *anthropicModel) streamOnce(ctx context.Context, params anthropic.MessageNewParams, yield func(*model.LLMResponse, error) bool) error {
+	stream := m.client.Messages.NewStreaming(ctx, params)
+	// Next() leaves the response body open on the SSE error-event and
+	// consumer-stop paths; without this, each retried attempt would leak its
+	// predecessor's connection. Close is nil-safe when the request itself
+	// failed.
+	defer stream.Close()
+
+	message := anthropic.Message{}
+
+	// True once any delta has been yielded — the point of no return for
+	// retries.
+	yielded := false
+
+	for stream.Next() {
+		event := stream.Current()
+
+		// Accumulate the message. A failure here is almost always the
+		// SDK's message_stop re-marshal choking on a tool call whose input
+		// JSON was truncated at the max_tokens ceiling. Surface that as a
+		// typed OutputInterruptedError carrying whatever survived; any other
+		// accumulation failure keeps its original error so it isn't
+		// misdiagnosed as an interruption.
+		if err := message.Accumulate(event); err != nil {
+			yield(nil, classifyAccumulateError(&message, err))
+			return nil
+		}
+
+		// Handle different event types for streaming
+		switch ev := event.AsAny().(type) {
+		case anthropic.ContentBlockDeltaEvent:
+			// Handle text deltas
+			switch delta := ev.Delta.AsAny().(type) {
+			case anthropic.TextDelta:
+				yielded = true
+				resp := converters.StreamDeltaToPartialResponse(delta.Text)
+				if !yield(resp, nil) {
+					return nil
+				}
+			case anthropic.ThinkingDelta:
+				yielded = true
+				resp := converters.StreamThinkingDeltaToPartialResponse(delta.Thinking)
+				if !yield(resp, nil) {
+					return nil
 				}
 			}
 		}
+	}
 
-		if err := stream.Err(); err != nil {
-			yield(nil, fmt.Errorf("stream error: %w", err))
-			return
+	if err := stream.Err(); err != nil {
+		if !yielded {
+			// Pre-content failure: generateStream decides whether to retry.
+			return err
 		}
+		yield(nil, fmt.Errorf("stream error: %w", err))
+		return nil
+	}
 
-		// Belt-and-braces: the stream can complete without Accumulate erroring
-		// yet still carry a tool call truncated at the ceiling (invalid input
-		// JSON). Converting that normally would fail or emit a broken tool
-		// call, so report the interruption instead. A max_tokens stop with an
-		// otherwise-valid message (e.g. truncated mid-thinking) is NOT an
-		// interruption for our purposes — it converts normally below and the
-		// harness reacts off the mapped max_tokens FinishReason.
-		if message.StopReason == anthropic.StopReasonMaxTokens && converters.HasIncompleteToolInput(&message) {
-			yield(nil, newOutputInterruptedError(&message, nil))
-			return
-		}
+	// Belt-and-braces: the stream can complete without Accumulate erroring
+	// yet still carry a tool call truncated at the ceiling (invalid input
+	// JSON). Converting that normally would fail or emit a broken tool
+	// call, so report the interruption instead. A max_tokens stop with an
+	// otherwise-valid message (e.g. truncated mid-thinking) is NOT an
+	// interruption for our purposes — it converts normally below and the
+	// harness reacts off the mapped max_tokens FinishReason.
+	if message.StopReason == anthropic.StopReasonMaxTokens && converters.HasIncompleteToolInput(&message) {
+		yield(nil, newOutputInterruptedError(&message, nil))
+		return nil
+	}
 
-		// Yield the final complete response
-		finalResp, err := converters.MessageToLLMResponse(&message)
-		if err != nil {
-			yield(nil, fmt.Errorf("failed to convert stream response: %w", err))
-			return
-		}
-		finalResp.TurnComplete = true
-		yield(finalResp, nil)
+	// Yield the final complete response
+	finalResp, err := converters.MessageToLLMResponse(&message)
+	if err != nil {
+		yield(nil, fmt.Errorf("failed to convert stream response: %w", err))
+		return nil
+	}
+	finalResp.TurnComplete = true
+	yield(finalResp, nil)
+	return nil
+}
+
+// isOverloadedStreamError reports whether err is Anthropic's overloaded_error.
+// Vertex delivers overload mid-stream as an SSE error event after a 200 OK,
+// so the *anthropic.Error carries StatusCode 200 — gate on the error
+// envelope's type, never the status code. A direct-API 529 that exhausted the
+// SDK's own HTTP retries also matches and gets retried again here; retrying
+// overload harder is deliberate.
+func isOverloadedStreamError(err error) bool {
+	var apierr *anthropic.Error
+	return errors.As(err, &apierr) && apierr.Type() == anthropic.ErrorTypeOverloadedError
+}
+
+// streamRetryDelay returns the backoff before retrying the given (1-based)
+// failed attempt: ~1s then ~2s, each with up to 25% random jitter so
+// concurrent streams hitting the same overloaded shard don't retry in
+// lockstep.
+func streamRetryDelay(attempt int) time.Duration {
+	base := streamRetryBaseDelay << (attempt - 1)
+	return base + rand.N(base/4)
+}
+
+// sleepWithContext blocks for d or until ctx is done, whichever comes first,
+// returning ctx's error when cancelled so retries abort promptly instead of
+// sleeping through a dead request.
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

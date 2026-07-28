@@ -31,6 +31,7 @@ Both lines are maintained. If you're upgrading your own `adk-go` dependency to v
 - PDF document processing (beta)
 - System instructions
 - Both direct Anthropic API and Vertex AI backends
+- Automatic retry of mid-stream overload errors (streaming only, before any content has been yielded)
 
 ## Supported Models
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## [v2.0.7] - Retry mid-stream overload errors
+
+- Retry streaming requests when Anthropic reports `overloaded_error` mid-stream. Vertex AI can accept a streaming request (HTTP 200 at the header level) and then deliver `{"type":"error","error":{"type":"overloaded_error"}}` as an SSE `error` event; the SDK's HTTP-level retries never see it because the request already succeeded. `generateStream` now makes up to 3 attempts with ~1s/~2s jittered backoff, aborting promptly on context cancellation — but only while nothing has been yielded to the consumer. Once a text or thinking delta has streamed, a retry would duplicate content, so the error surfaces immediately as before. On exhaustion the error is wrapped exactly as before (`stream error: %w`), preserving caller-side `errors.As` detection and error grouping. This is a deliberate, narrow exception to the adapter's "no continuation decisions" rule (v2.0.3): a pre-content overload retry is invisible to callers and carries no continuation semantics. The non-streaming path is unchanged — overload there arrives as HTTP 529 and is already covered by the SDK's default retries.
+
 ## [v2.0.6] - Preserve function response media
 
 - Convert `FunctionResponse.Parts` into image and PDF content nested inside the matching Anthropic `tool_result`. Tool-returned media now stays correlated with its tool call instead of requiring separate user-message parts that can violate Anthropic's tool-result ordering rules.
