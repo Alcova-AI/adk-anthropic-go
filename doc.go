@@ -83,4 +83,6 @@
 //   - Multimodal inputs (text, images)
 //   - PDF document processing (beta)
 //   - System instructions
+//   - Automatic retry of mid-stream overload errors (streaming only, before
+//     any content has been yielded)
 package adkanthropic
