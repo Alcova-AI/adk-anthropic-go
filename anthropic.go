@@ -205,12 +205,6 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 			return
 		}
 
-		// Directly-constructed models (tests) may leave retrySleep nil.
-		sleep := m.retrySleep
-		if sleep == nil {
-			sleep = sleepWithContext
-		}
-
 		// Retry mid-stream overloads, but only while nothing has been yielded:
 		// once a delta has reached the consumer, a retry would replay content
 		// it already has, so streamOnce handles those failures terminally and
@@ -228,10 +222,12 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 				yield(nil, fmt.Errorf("stream error: %w", streamErr))
 				return
 			}
-			if err := sleep(ctx, streamRetryDelay(attempt)); err != nil {
-				// Cancelled during backoff: stop retrying and surface the
-				// overload we were retrying, in the usual wrapping.
-				yield(nil, fmt.Errorf("stream error: %w", streamErr))
+			if err := m.retrySleep(ctx, streamRetryDelay(attempt)); err != nil {
+				// Cancelled during backoff: wrap the overload and the
+				// cancellation together, so callers that filter caller
+				// cancellations (errors.Is) and callers that detect overload
+				// (errors.As) both still match.
+				yield(nil, fmt.Errorf("stream error: %w (retry aborted: %w)", streamErr, err))
 				return
 			}
 		}

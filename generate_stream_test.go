@@ -55,6 +55,16 @@ const partialThenOverloadSSE = messagePrefixSSE +
 	"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n" +
 	overloadedSSE
 
+// Overload after a thinking delta has streamed — the thinking branch sets the
+// yielded guard too, so this must not retry either.
+const thinkingThenOverloadSSE = "event: message_start\n" +
+	"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-haiku-4-5\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n" +
+	"event: content_block_start\n" +
+	"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n" +
+	"event: content_block_delta\n" +
+	"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"weighing options\"}}\n\n" +
+	overloadedSSE
+
 // newSSEServer answers the i-th request with bodies[i] (repeating the last
 // body once exhausted) and counts requests.
 func newSSEServer(t *testing.T, bodies ...string) (*httptest.Server, *atomic.Int32) {
@@ -228,6 +238,30 @@ func TestGenerateStream_NoRetryAfterPartialOutput(t *testing.T) {
 	}
 }
 
+func TestGenerateStream_NoRetryAfterThinkingOutput(t *testing.T) {
+	srv, requests := newSSEServer(t, thinkingThenOverloadSSE)
+	m, sleeps := newStreamTestModel(t, srv.URL)
+
+	pairs := collect(t.Context(), m)
+
+	if len(pairs) != 2 {
+		t.Fatalf("len(pairs) = %d, want 2 (thinking partial then error)", len(pairs))
+	}
+	if pairs[0].err != nil || !pairs[0].resp.Partial || !pairs[0].resp.Content.Parts[0].Thought {
+		t.Errorf("pairs[0] = %+v, want partial thinking delta", pairs[0])
+	}
+	var apierr *anthropic.Error
+	if !errors.As(pairs[1].err, &apierr) || apierr.Type() != anthropic.ErrorTypeOverloadedError {
+		t.Errorf("pairs[1].err = %v, want wrapped overloaded_error", pairs[1].err)
+	}
+	if got := int(requests.Load()); got != 1 {
+		t.Errorf("requests = %d, want 1 — an overload after yielded thinking must not retry", got)
+	}
+	if len(*sleeps) != 0 {
+		t.Errorf("sleeps = %d, want 0", len(*sleeps))
+	}
+}
+
 func TestGenerateStream_NoRetryOnNonOverloadedError(t *testing.T) {
 	srv, requests := newSSEServer(t, apiErrorSSE)
 	m, sleeps := newStreamTestModel(t, srv.URL)
@@ -261,9 +295,14 @@ func TestGenerateStream_AbortsWhenBackoffCancelled(t *testing.T) {
 	if len(pairs) != 1 || pairs[0].resp != nil {
 		t.Fatalf("pairs = %+v, want exactly one error pair", pairs)
 	}
+	// Both identities must survive the wrap: the overload for detection, the
+	// cancellation for callers that filter caller-initiated aborts.
 	var apierr *anthropic.Error
 	if !errors.As(pairs[0].err, &apierr) || apierr.Type() != anthropic.ErrorTypeOverloadedError {
-		t.Errorf("err = %v, want the overload surfaced in the usual wrapping", pairs[0].err)
+		t.Errorf("err = %v, want the overload detectable via errors.As", pairs[0].err)
+	}
+	if !errors.Is(pairs[0].err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled detectable via errors.Is", pairs[0].err)
 	}
 	if got := int(requests.Load()); got != 1 {
 		t.Errorf("requests = %d, want 1 — no attempt after a cancelled backoff", got)
