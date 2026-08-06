@@ -33,7 +33,12 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-const defaultMaxTokens = 16384
+const (
+	defaultMaxTokens          = 16384
+	defaultVercelGatewayURL   = "https://ai-gateway.vercel.sh"
+	vercelClaudeSonnet46Model = "anthropic/claude-sonnet-4.6"
+	vercelClaudeHaiku45Model  = "anthropic/claude-haiku-4.5"
+)
 
 // Mid-stream overload retry policy. Vertex AI can accept a streaming request
 // (HTTP 200 at the header level) and then deliver overloaded_error as an SSE
@@ -48,6 +53,7 @@ const (
 type anthropicModel struct {
 	client           anthropic.Client
 	name             anthropic.Model
+	requestModel     anthropic.Model
 	variant          string
 	defaultMaxTokens int
 	promptCaching    *PromptCachingConfig
@@ -67,6 +73,10 @@ type anthropicModel struct {
 //
 // For Vertex AI, set VertexProjectID and VertexLocation in the config or use
 // GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION environment variables.
+//
+// For Vercel AI Gateway, set VariantVercelAIGateway and provide its API key.
+// Canonical Claude aliases are translated to Vercel model IDs on the wire,
+// while Name continues to return the canonical model name.
 func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (model.LLM, error) {
 	if cfg == nil {
 		cfg = &Config{}
@@ -98,8 +108,15 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 		}
 
 		client = newVertexClient(ctx, cfg)
-	default:
+	case VariantVercelAIGateway:
+		if cfg.APIKey == "" {
+			return nil, errors.New("APIKey is required for Vercel AI Gateway")
+		}
+		client = newVercelGatewayClient(cfg)
+	case VariantAnthropicAPI:
 		client = newAPIClient(cfg)
+	default:
+		return nil, fmt.Errorf("unsupported Anthropic variant %q", variant)
 	}
 
 	// max_tokens precedence: a per-request GenerateContentConfig.MaxOutputTokens
@@ -114,11 +131,41 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 	return &anthropicModel{
 		client:           client,
 		name:             modelName,
+		requestModel:     requestModelForVariant(modelName, variant),
 		variant:          variant,
 		defaultMaxTokens: maxTokens,
 		promptCaching:    cfg.PromptCaching,
 		retrySleep:       sleepWithContext,
 	}, nil
+}
+
+// newVercelGatewayClient creates a client for Vercel AI Gateway's
+// Anthropic-compatible API.
+func newVercelGatewayClient(cfg *Config) anthropic.Client {
+	baseURL := cfg.BaseURL
+	if baseURL == "" {
+		baseURL = defaultVercelGatewayURL
+	}
+
+	return anthropic.NewClient(
+		option.WithAPIKey(cfg.APIKey),
+		option.WithBaseURL(baseURL),
+	)
+}
+
+func requestModelForVariant(modelName anthropic.Model, variant string) anthropic.Model {
+	if variant != VariantVercelAIGateway {
+		return modelName
+	}
+
+	switch modelName {
+	case anthropic.ModelClaudeSonnet4_6:
+		return vercelClaudeSonnet46Model
+	case anthropic.ModelClaudeHaiku4_5:
+		return vercelClaudeHaiku45Model
+	default:
+		return modelName
+	}
 }
 
 // newAPIClient creates a client for the direct Anthropic API.
@@ -161,6 +208,13 @@ func newVertexClient(ctx context.Context, cfg *Config) anthropic.Client {
 // Name returns the model name.
 func (m *anthropicModel) Name() string {
 	return string(m.name)
+}
+
+func (m *anthropicModel) wireModel() anthropic.Model {
+	if m.requestModel != "" {
+		return m.requestModel
+	}
+	return m.name
 }
 
 // GenerateContent calls the Anthropic model.
@@ -365,7 +419,7 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 	}
 
 	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model(m.name),
+		Model:     m.wireModel(),
 		Messages:  messages,
 		MaxTokens: int64(m.defaultMaxTokens),
 	}
@@ -437,7 +491,7 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 	if req.Config != nil {
 		thinkingCfg = req.Config.ThinkingConfig
 	}
-	mapping := converters.ThinkingConfigToAnthropic(thinkingCfg, params.Model)
+	mapping := converters.ThinkingConfigToAnthropic(thinkingCfg, m.name)
 	params.Thinking = mapping.Thinking
 	if mapping.Effort != "" {
 		params.OutputConfig.Effort = mapping.Effort

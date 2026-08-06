@@ -45,9 +45,10 @@ type PromptCachingConfig struct {
 
 // Config holds configuration for creating an Anthropic Claude model.
 type Config struct {
-	// APIKey is the Anthropic API key for direct API access.
+	// APIKey authenticates requests to the selected API backend.
 	// If not provided, it will be read from the ANTHROPIC_API_KEY environment variable.
-	// This is only used when Variant is VariantAnthropicAPI.
+	// Environment fallback is only used when Variant is VariantAnthropicAPI.
+	// VariantVercelAIGateway requires an explicit API key.
 	APIKey string
 
 	// VertexProjectID is the Google Cloud project ID for Vertex AI access.
@@ -62,7 +63,7 @@ type Config struct {
 	VertexLocation string
 
 	// Variant determines which backend to use for API calls.
-	// Valid values are VariantAnthropicAPI and VariantVertexAI.
+	// Valid values are VariantAnthropicAPI, VariantVertexAI, and VariantVercelAIGateway.
 	// If empty, the variant is determined from the ANTHROPIC_USE_VERTEX environment variable.
 	Variant string
 
@@ -74,6 +75,8 @@ type Config struct {
 	// GenerateContentConfig.MaxOutputTokens override.
 	DefaultMaxTokens int
 
+	// BaseURL overrides the API endpoint. VariantVercelAIGateway defaults to
+	// https://ai-gateway.vercel.sh when this is empty.
 	BaseURL string
 
 	// PromptCaching configures optional prompt caching breakpoints.
