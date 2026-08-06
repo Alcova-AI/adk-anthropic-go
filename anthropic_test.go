@@ -138,7 +138,7 @@ func TestVercelGatewayBaseURL(t *testing.T) {
 		cfg  *Config
 		want string
 	}{
-		{name: "default", cfg: &Config{}, want: defaultVercelGatewayURL},
+		{name: "default", cfg: &Config{}, want: "https://ai-gateway.vercel.sh"},
 		{name: "custom", cfg: &Config{BaseURL: "https://gateway.example.com"}, want: "https://gateway.example.com"},
 	}
 
