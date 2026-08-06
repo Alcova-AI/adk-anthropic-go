@@ -63,7 +63,7 @@ type anthropicModel struct {
 	retrySleep func(ctx context.Context, d time.Duration) error
 }
 
-// NewModel returns [model.LLM], backed by Anthropic Claude.
+// NewModel returns [model.LLM], backed by an Anthropic-compatible API.
 //
 // It creates an Anthropic client based on the provided configuration.
 // If Variant is not specified, it checks the ANTHROPIC_USE_VERTEX environment variable.
@@ -142,15 +142,17 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 // newVercelGatewayClient creates a client for Vercel AI Gateway's
 // Anthropic-compatible API.
 func newVercelGatewayClient(cfg *Config) anthropic.Client {
-	baseURL := cfg.BaseURL
-	if baseURL == "" {
-		baseURL = defaultVercelGatewayURL
-	}
-
 	return anthropic.NewClient(
 		option.WithAPIKey(cfg.APIKey),
-		option.WithBaseURL(baseURL),
+		option.WithBaseURL(vercelGatewayBaseURL(cfg)),
 	)
+}
+
+func vercelGatewayBaseURL(cfg *Config) string {
+	if cfg.BaseURL != "" {
+		return cfg.BaseURL
+	}
+	return defaultVercelGatewayURL
 }
 
 func requestModelForVariant(modelName anthropic.Model, variant string) anthropic.Model {

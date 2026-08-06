@@ -132,6 +132,25 @@ func TestNewModel_VercelAIGateway_MissingAPIKey(t *testing.T) {
 	}
 }
 
+func TestVercelGatewayBaseURL(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want string
+	}{
+		{name: "default", cfg: &Config{}, want: defaultVercelGatewayURL},
+		{name: "custom", cfg: &Config{BaseURL: "https://gateway.example.com"}, want: "https://gateway.example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := vercelGatewayBaseURL(tt.cfg); got != tt.want {
+				t.Errorf("vercelGatewayBaseURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNewModel_RejectsUnknownVariant(t *testing.T) {
 	_, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
 		Variant: "UNKNOWN",

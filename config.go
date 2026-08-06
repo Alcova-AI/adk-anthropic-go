@@ -43,7 +43,7 @@ type PromptCachingConfig struct {
 	ConversationHistory *CacheBreakpoint
 }
 
-// Config holds configuration for creating an Anthropic Claude model.
+// Config holds configuration for creating a model through an Anthropic-compatible backend.
 type Config struct {
 	// APIKey authenticates requests to the selected API backend.
 	// If not provided, it will be read from the ANTHROPIC_API_KEY environment variable.
