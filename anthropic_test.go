@@ -15,6 +15,10 @@
 package adkanthropic
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -114,6 +118,159 @@ func TestNewModel_VertexAI_MissingConfig(t *testing.T) {
 				t.Fatalf("NewModel() error = %v, want contains %q", err, tt.wantError)
 			}
 		})
+	}
+}
+
+func TestNewModel_VercelAIGateway_MissingAPIKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key-must-not-be-reused")
+
+	_, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
+		Variant: VariantVercelAIGateway,
+	})
+	if err == nil || !strings.Contains(err.Error(), "APIKey is required for Vercel AI Gateway") {
+		t.Fatalf("NewModel() error = %v, want missing Vercel API key error", err)
+	}
+}
+
+func TestVercelGatewayBaseURL(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want string
+	}{
+		{name: "default", cfg: &Config{}, want: "https://ai-gateway.vercel.sh"},
+		{name: "custom", cfg: &Config{BaseURL: "https://gateway.example.com"}, want: "https://gateway.example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := vercelGatewayBaseURL(tt.cfg); got != tt.want {
+				t.Errorf("vercelGatewayBaseURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewModel_RejectsUnknownVariant(t *testing.T) {
+	_, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
+		Variant: "UNKNOWN",
+	})
+	if err == nil || !strings.Contains(err.Error(), `unsupported Anthropic variant "UNKNOWN"`) {
+		t.Fatalf("NewModel() error = %v, want unsupported variant error", err)
+	}
+}
+
+func TestConvertRequest_VercelAIGatewayModelMapping(t *testing.T) {
+	tests := []struct {
+		name          string
+		modelName     anthropic.Model
+		wantWireModel anthropic.Model
+		wantAdaptive  bool
+	}{
+		{
+			name:          "sonnet_alias",
+			modelName:     anthropic.ModelClaudeSonnet4_6,
+			wantWireModel: vercelClaudeSonnet46Model,
+			wantAdaptive:  true,
+		},
+		{
+			name:          "haiku_alias",
+			modelName:     anthropic.ModelClaudeHaiku4_5,
+			wantWireModel: vercelClaudeHaiku45Model,
+		},
+		{
+			name:          "gateway_qualified_model_passes_through",
+			modelName:     "moonshotai/kimi-k3",
+			wantWireModel: "moonshotai/kimi-k3",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			llm, err := NewModel(t.Context(), tt.modelName, &Config{
+				APIKey:  "test-gateway-key",
+				Variant: VariantVercelAIGateway,
+			})
+			if err != nil {
+				t.Fatalf("NewModel() error = %v", err)
+			}
+			if llm.Name() != string(tt.modelName) {
+				t.Errorf("Name() = %q, want canonical name %q", llm.Name(), tt.modelName)
+			}
+
+			params, err := llm.(*anthropicModel).convertRequest(&model.LLMRequest{
+				Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
+			})
+			if err != nil {
+				t.Fatalf("convertRequest() error = %v", err)
+			}
+			if params.Model != tt.wantWireModel {
+				t.Errorf("request model = %q, want %q", params.Model, tt.wantWireModel)
+			}
+			if tt.wantAdaptive && params.Thinking.OfAdaptive == nil {
+				t.Error("expected canonical Sonnet name to retain adaptive thinking defaults")
+			}
+		})
+	}
+}
+
+func TestNewModel_VercelAIGatewayUsesConfiguredEndpointAndAPIKey(t *testing.T) {
+	type capturedRequest struct {
+		path   string
+		apiKey string
+		model  string
+	}
+	captured := make(chan capturedRequest, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var requestBody struct {
+			Model string `json:"model"`
+		}
+		if err := json.Unmarshal(body, &requestBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		captured <- capturedRequest{
+			path:   r.URL.Path,
+			apiKey: r.Header.Get("x-api-key"),
+			model:  requestBody.Model,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","model":"anthropic/claude-sonnet-4.6","content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
+		APIKey:  "gateway-key",
+		Variant: VariantVercelAIGateway,
+		BaseURL: srv.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	for _, err := range llm.GenerateContent(t.Context(), &model.LLMRequest{
+		Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
+	}, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent() error = %v", err)
+		}
+	}
+
+	got := <-captured
+	if got.path != "/v1/messages" {
+		t.Errorf("request path = %q, want /v1/messages", got.path)
+	}
+	if got.apiKey != "gateway-key" {
+		t.Errorf("x-api-key = %q, want gateway-key", got.apiKey)
+	}
+	if got.model != vercelClaudeSonnet46Model {
+		t.Errorf("request model = %q, want %q", got.model, vercelClaudeSonnet46Model)
 	}
 }
 

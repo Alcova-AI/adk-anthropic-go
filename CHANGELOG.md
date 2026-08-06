@@ -1,5 +1,10 @@
 # Changelog
 
+## [v2.0.8] - Add Vercel AI Gateway transport
+
+- Add an explicit Vercel AI Gateway variant using its Anthropic-compatible endpoint. Canonical Claude Sonnet 4.6 and Haiku 4.5 aliases are remapped to Vercel's creator/model IDs on the wire while capability checks and `Name()` keep using the canonical Anthropic names. Other gateway-qualified model IDs pass through unchanged.
+- Reject missing Vercel API keys and unknown variants during model construction.
+
 ## [v2.0.7] - Retry mid-stream overload errors
 
 - Retry streaming requests when Anthropic reports `overloaded_error` mid-stream. Vertex AI can accept a streaming request (HTTP 200 at the header level) and then deliver `{"type":"error","error":{"type":"overloaded_error"}}` as an SSE `error` event; the SDK's HTTP-level retries never see it because the request already succeeded. `generateStream` now makes up to 3 attempts with ~1s/~2s jittered backoff, aborting promptly on context cancellation — but only while nothing has been yielded to the consumer. Once a text or thinking delta has streamed, a retry would duplicate content, so the error surfaces immediately as before. The retry is scoped to overloads delivered inside an HTTP 200 stream: a direct-API HTTP 529 has already exhausted the SDK's own retries and is not retried again by the adapter. On exhaustion the error is wrapped exactly as before (`stream error: %w`), preserving caller-side `errors.As` detection and error grouping. This is a deliberate, narrow exception to the adapter's "no continuation decisions" rule (v2.0.3): a pre-content overload retry is invisible to callers and carries no continuation semantics. The non-streaming path is unchanged — overload there arrives as HTTP 529 and is already covered by the SDK's default retries.
