@@ -46,8 +46,10 @@ const (
 )
 
 type anthropicModel struct {
-	client           anthropic.Client
-	name             anthropic.Model
+	client anthropic.Client
+	// name is the canonical model used by Name and capability checks.
+	name anthropic.Model
+	// requestModel is the model identifier sent to the API.
 	requestModel     anthropic.Model
 	variant          string
 	defaultMaxTokens int
