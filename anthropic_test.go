@@ -238,7 +238,7 @@ func TestNewModel_AnthropicCompatibleEndpointUsesConfiguredRequest(t *testing.T)
 
 func TestConvertRequest_VertexAI_SetsOutputConfig(t *testing.T) {
 	m := &anthropicModel{
-		name:             "claude-haiku-4-5-20251001",
+		canonicalModel:   "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -273,7 +273,7 @@ func TestConvertRequest_VertexAI_SetsOutputConfig(t *testing.T) {
 
 func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse(t *testing.T) {
 	m := &anthropicModel{
-		name:             "claude-haiku-4-5-20251001",
+		canonicalModel:   "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -330,7 +330,7 @@ func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse(t *testin
 
 func TestConvertRequest_VertexAI_TransformsUnsupportedSchemaConstraints(t *testing.T) {
 	m := &anthropicModel{
-		name:             "claude-haiku-4-5-20251001",
+		canonicalModel:   "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -434,7 +434,7 @@ func assertAdditionalPropertiesFalse(t *testing.T, schema map[string]any, label 
 
 func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse_AnyOf(t *testing.T) {
 	m := &anthropicModel{
-		name:             "claude-haiku-4-5-20251001",
+		canonicalModel:   "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -487,7 +487,7 @@ func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse_AnyOf(t *
 
 func TestConvertRequest_DirectAPI_SetsOutputConfig(t *testing.T) {
 	m := &anthropicModel{
-		name:             "claude-haiku-4-5-20251001",
+		canonicalModel:   "claude-haiku-4-5-20251001",
 		variant:          VariantAnthropicAPI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -556,7 +556,7 @@ func TestConvertRequest_DefaultsToAdaptiveOnCapableModel(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &anthropicModel{
 				// Adaptive-capable model — unversioned SDK alias.
-				name:             "claude-sonnet-4-6",
+				canonicalModel:   "claude-sonnet-4-6",
 				variant:          VariantAnthropicAPI,
 				defaultMaxTokens: testMaxTokens,
 			}
@@ -567,7 +567,7 @@ func TestConvertRequest_DefaultsToAdaptiveOnCapableModel(t *testing.T) {
 			}
 
 			if params.Thinking.OfAdaptive == nil {
-				t.Fatalf("expected adaptive thinking on %s, got Thinking=%+v", m.name, params.Thinking)
+				t.Fatalf("expected adaptive thinking on %s, got Thinking=%+v", m.canonicalModel, params.Thinking)
 			}
 		})
 	}
@@ -581,7 +581,7 @@ func TestConvertRequest_DefaultsToAdaptiveOnCapableModel(t *testing.T) {
 func TestConvertRequest_NilConfigLeavesThinkingOffOnNonAdaptive(t *testing.T) {
 	m := &anthropicModel{
 		// Manual-only model — adaptive is not supported.
-		name:             "claude-haiku-4-5",
+		canonicalModel:   "claude-haiku-4-5",
 		variant:          VariantAnthropicAPI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -598,10 +598,10 @@ func TestConvertRequest_NilConfigLeavesThinkingOffOnNonAdaptive(t *testing.T) {
 	}
 
 	if params.Thinking.OfAdaptive != nil {
-		t.Errorf("non-adaptive model %s should not default to adaptive thinking, got OfAdaptive=%+v", m.name, params.Thinking.OfAdaptive)
+		t.Errorf("non-adaptive model %s should not default to adaptive thinking, got OfAdaptive=%+v", m.canonicalModel, params.Thinking.OfAdaptive)
 	}
 	if params.Thinking.OfEnabled != nil {
-		t.Errorf("non-adaptive model %s should not default to manual thinking budget, got OfEnabled=%+v", m.name, params.Thinking.OfEnabled)
+		t.Errorf("non-adaptive model %s should not default to manual thinking budget, got OfEnabled=%+v", m.canonicalModel, params.Thinking.OfEnabled)
 	}
 }
 
@@ -700,7 +700,7 @@ func TestConvertRequest_ForcedToolUseDropsThinking(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &anthropicModel{
-				name:             tc.modelName,
+				canonicalModel:   tc.modelName,
 				variant:          VariantAnthropicAPI,
 				defaultMaxTokens: testMaxTokens,
 			}
@@ -768,7 +768,7 @@ func TestConvertRequest_AutoToolUseKeepsThinking(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &anthropicModel{
-				name:             "claude-sonnet-4-6",
+				canonicalModel:   "claude-sonnet-4-6",
 				variant:          VariantAnthropicAPI,
 				defaultMaxTokens: testMaxTokens,
 			}

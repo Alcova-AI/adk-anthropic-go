@@ -47,8 +47,8 @@ const (
 
 type anthropicModel struct {
 	client anthropic.Client
-	// name is the canonical model used by Name and capability checks.
-	name anthropic.Model
+	// canonicalModel is exposed through Name and controls local capabilities.
+	canonicalModel anthropic.Model
 	// requestModel is the model identifier sent to the API.
 	requestModel     anthropic.Model
 	variant          string
@@ -127,7 +127,7 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 
 	return &anthropicModel{
 		client:           client,
-		name:             modelName,
+		canonicalModel:   modelName,
 		requestModel:     requestModel,
 		variant:          variant,
 		defaultMaxTokens: maxTokens,
@@ -175,14 +175,14 @@ func newVertexClient(ctx context.Context, cfg *Config) anthropic.Client {
 
 // Name returns the model name.
 func (m *anthropicModel) Name() string {
-	return string(m.name)
+	return string(m.canonicalModel)
 }
 
 func (m *anthropicModel) wireModel() anthropic.Model {
 	if m.requestModel != "" {
 		return m.requestModel
 	}
-	return m.name
+	return m.canonicalModel
 }
 
 // GenerateContent calls the Anthropic model.
@@ -459,7 +459,7 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 	if req.Config != nil {
 		thinkingCfg = req.Config.ThinkingConfig
 	}
-	mapping := converters.ThinkingConfigToAnthropic(thinkingCfg, m.name)
+	mapping := converters.ThinkingConfigToAnthropic(thinkingCfg, m.canonicalModel)
 	params.Thinking = mapping.Thinking
 	if mapping.Effort != "" {
 		params.OutputConfig.Effort = mapping.Effort
