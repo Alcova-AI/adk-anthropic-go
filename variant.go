@@ -27,9 +27,6 @@ const (
 
 	// VariantVertexAI uses Anthropic models via Google Cloud Vertex AI.
 	VariantVertexAI = "VERTEX_AI"
-
-	// VariantVercelAIGateway uses Vercel AI Gateway's Anthropic-compatible API.
-	VariantVercelAIGateway = "VERCEL_AI_GATEWAY"
 )
 
 // GetVariant returns the configured variant for the Anthropic backend.

@@ -1,9 +1,9 @@
 # Changelog
 
-## [v2.0.8] - Add Vercel AI Gateway transport
+## [v2.0.8] - Add request model overrides
 
-- Add an explicit Vercel AI Gateway variant using its Anthropic-compatible endpoint. Canonical Claude Sonnet 4.6 and Haiku 4.5 aliases are remapped to Vercel's creator/model IDs on the wire while capability checks and `Name()` keep using the canonical Anthropic names. Other gateway-qualified model IDs pass through unchanged.
-- Reject missing Vercel API keys and unknown variants during model construction.
+- Add `Config.RequestModel` for Anthropic-compatible APIs that require a different model identifier on the wire. Capability checks and `Name()` continue to use the canonical model passed to `NewModel`.
+- Reject unknown backend variants during model construction.
 
 ## [v2.0.7] - Retry mid-stream overload errors
 

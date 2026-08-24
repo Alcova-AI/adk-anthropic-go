@@ -97,6 +97,21 @@ model, err := adkanthropic.NewModel(ctx, "claude-sonnet-4@20250514", &adkanthrop
 
 Or set `ANTHROPIC_USE_VERTEX=1` to use Vertex AI without specifying the variant in code.
 
+### Anthropic-Compatible APIs
+
+Use `BaseURL` to select a compatible endpoint. Set `RequestModel` when that
+endpoint expects a different model identifier from the canonical Anthropic name:
+
+```go
+model, err := adkanthropic.NewModel(ctx, anthropic.ModelClaudeSonnet4_6, &adkanthropic.Config{
+	APIKey:       os.Getenv("GATEWAY_API_KEY"),
+	BaseURL:      "https://gateway.example.com",
+	RequestModel: "provider/claude-sonnet-4.6",
+})
+```
+
+`model.Name()` and capability checks continue to use the canonical model name.
+
 ### Environment Variables
 
 | Variable | Description |
@@ -119,6 +134,12 @@ type Config struct {
 
 	// Backend variant: VariantAnthropicAPI or VariantVertexAI
 	Variant string
+
+	// Optional endpoint for proxies and Anthropic-compatible APIs
+	BaseURL string
+
+	// Optional model identifier sent to the API
+	RequestModel anthropic.Model
 
 	// Default max tokens (default: the model's output ceiling —
 	// 128000 for Sonnet 4.6 / Opus 4.x, 64000 for Haiku 4.5 and unknown models)

@@ -121,36 +121,6 @@ func TestNewModel_VertexAI_MissingConfig(t *testing.T) {
 	}
 }
 
-func TestNewModel_VercelAIGateway_MissingAPIKey(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key-must-not-be-reused")
-
-	_, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
-		Variant: VariantVercelAIGateway,
-	})
-	if err == nil || !strings.Contains(err.Error(), "APIKey is required for Vercel AI Gateway") {
-		t.Fatalf("NewModel() error = %v, want missing Vercel API key error", err)
-	}
-}
-
-func TestVercelGatewayBaseURL(t *testing.T) {
-	tests := []struct {
-		name string
-		cfg  *Config
-		want string
-	}{
-		{name: "default", cfg: &Config{}, want: "https://ai-gateway.vercel.sh"},
-		{name: "custom", cfg: &Config{BaseURL: "https://gateway.example.com"}, want: "https://gateway.example.com"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := vercelGatewayBaseURL(tt.cfg); got != tt.want {
-				t.Errorf("vercelGatewayBaseURL() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestNewModel_RejectsUnknownVariant(t *testing.T) {
 	_, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
 		Variant: "UNKNOWN",
@@ -160,42 +130,34 @@ func TestNewModel_RejectsUnknownVariant(t *testing.T) {
 	}
 }
 
-func TestConvertRequest_VercelAIGatewayModelMapping(t *testing.T) {
+func TestConvertRequest_RequestModelOverride(t *testing.T) {
 	tests := []struct {
-		name          string
-		modelName     anthropic.Model
-		wantWireModel anthropic.Model
-		wantAdaptive  bool
+		name         string
+		requestModel anthropic.Model
+		wantModel    anthropic.Model
 	}{
 		{
-			name:          "sonnet_alias",
-			modelName:     anthropic.ModelClaudeSonnet4_6,
-			wantWireModel: vercelClaudeSonnet46Model,
-			wantAdaptive:  true,
+			name:      "uses canonical model by default",
+			wantModel: anthropic.ModelClaudeSonnet4_6,
 		},
 		{
-			name:          "haiku_alias",
-			modelName:     anthropic.ModelClaudeHaiku4_5,
-			wantWireModel: vercelClaudeHaiku45Model,
-		},
-		{
-			name:          "gateway_qualified_model_passes_through",
-			modelName:     "moonshotai/kimi-k3",
-			wantWireModel: "moonshotai/kimi-k3",
+			name:         "uses request model override",
+			requestModel: "provider/claude-sonnet-4.6",
+			wantModel:    "provider/claude-sonnet-4.6",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			llm, err := NewModel(t.Context(), tt.modelName, &Config{
-				APIKey:  "test-gateway-key",
-				Variant: VariantVercelAIGateway,
+			llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
+				APIKey:       "test-api-key",
+				RequestModel: tt.requestModel,
 			})
 			if err != nil {
 				t.Fatalf("NewModel() error = %v", err)
 			}
-			if llm.Name() != string(tt.modelName) {
-				t.Errorf("Name() = %q, want canonical name %q", llm.Name(), tt.modelName)
+			if llm.Name() != string(anthropic.ModelClaudeSonnet4_6) {
+				t.Errorf("Name() = %q, want canonical name %q", llm.Name(), anthropic.ModelClaudeSonnet4_6)
 			}
 
 			params, err := llm.(*anthropicModel).convertRequest(&model.LLMRequest{
@@ -204,17 +166,17 @@ func TestConvertRequest_VercelAIGatewayModelMapping(t *testing.T) {
 			if err != nil {
 				t.Fatalf("convertRequest() error = %v", err)
 			}
-			if params.Model != tt.wantWireModel {
-				t.Errorf("request model = %q, want %q", params.Model, tt.wantWireModel)
+			if params.Model != tt.wantModel {
+				t.Errorf("request model = %q, want %q", params.Model, tt.wantModel)
 			}
-			if tt.wantAdaptive && params.Thinking.OfAdaptive == nil {
+			if params.Thinking.OfAdaptive == nil {
 				t.Error("expected canonical Sonnet name to retain adaptive thinking defaults")
 			}
 		})
 	}
 }
 
-func TestNewModel_VercelAIGatewayUsesConfiguredEndpointAndAPIKey(t *testing.T) {
+func TestNewModel_AnthropicCompatibleEndpointUsesConfiguredRequest(t *testing.T) {
 	type capturedRequest struct {
 		path   string
 		apiKey string
@@ -246,9 +208,9 @@ func TestNewModel_VercelAIGatewayUsesConfiguredEndpointAndAPIKey(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
-		APIKey:  "gateway-key",
-		Variant: VariantVercelAIGateway,
-		BaseURL: srv.URL,
+		APIKey:       "gateway-key",
+		BaseURL:      srv.URL,
+		RequestModel: "provider/claude-sonnet-4.6",
 	})
 	if err != nil {
 		t.Fatalf("NewModel() error = %v", err)
@@ -269,8 +231,8 @@ func TestNewModel_VercelAIGatewayUsesConfiguredEndpointAndAPIKey(t *testing.T) {
 	if got.apiKey != "gateway-key" {
 		t.Errorf("x-api-key = %q, want gateway-key", got.apiKey)
 	}
-	if got.model != vercelClaudeSonnet46Model {
-		t.Errorf("request model = %q, want %q", got.model, vercelClaudeSonnet46Model)
+	if got.model != "provider/claude-sonnet-4.6" {
+		t.Errorf("request model = %q, want %q", got.model, "provider/claude-sonnet-4.6")
 	}
 }
 

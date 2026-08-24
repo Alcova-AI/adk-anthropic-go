@@ -16,7 +16,7 @@
 // for use with Google's Agent Development Kit (ADK).
 //
 // This package provides support for the direct Anthropic API, Anthropic models
-// via Google Cloud Vertex AI, and Vercel AI Gateway's Anthropic-compatible API.
+// via Google Cloud Vertex AI, and Anthropic-compatible APIs.
 //
 // # Installation
 //
@@ -57,17 +57,18 @@
 // Alternatively, set the ANTHROPIC_USE_VERTEX environment variable to "1" or "true"
 // to automatically use Vertex AI without specifying the variant in code.
 //
-// # Vercel AI Gateway Usage
+// # Anthropic-Compatible API Usage
 //
-// To use Vercel AI Gateway:
+// To use an Anthropic-compatible API while retaining the canonical model name:
 //
 //	model, err := adkanthropic.NewModel(ctx, anthropic.ModelClaudeSonnet4_6, &adkanthropic.Config{
-//		APIKey:  os.Getenv("AI_GATEWAY_API_KEY"),
-//		Variant: adkanthropic.VariantVercelAIGateway,
+//		APIKey:       os.Getenv("GATEWAY_API_KEY"),
+//		BaseURL:      "https://gateway.example.com",
+//		RequestModel: "provider/claude-sonnet-4.6",
 //	})
 //
-// The adapter keeps the canonical Anthropic model name for capability checks
-// and maps supported Claude aliases to Vercel's creator/model format on the wire.
+// The adapter uses RequestModel only for API requests. Name and capability
+// checks continue to use the canonical model passed to NewModel.
 //
 // # Supported Models
 //

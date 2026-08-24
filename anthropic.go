@@ -33,12 +33,7 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-const (
-	defaultMaxTokens          = 16384
-	defaultVercelGatewayURL   = "https://ai-gateway.vercel.sh"
-	vercelClaudeSonnet46Model = "anthropic/claude-sonnet-4.6"
-	vercelClaudeHaiku45Model  = "anthropic/claude-haiku-4.5"
-)
+const defaultMaxTokens = 16384
 
 // Mid-stream overload retry policy. Vertex AI can accept a streaming request
 // (HTTP 200 at the header level) and then deliver overloaded_error as an SSE
@@ -74,9 +69,9 @@ type anthropicModel struct {
 // For Vertex AI, set VertexProjectID and VertexLocation in the config or use
 // GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION environment variables.
 //
-// For Vercel AI Gateway, set VariantVercelAIGateway and provide its API key.
-// Canonical Claude aliases are translated to Vercel model IDs on the wire,
-// while Name continues to return the canonical model name.
+// For an Anthropic-compatible API, set BaseURL and APIKey. Set RequestModel
+// when the API expects a different model identifier from the canonical name.
+// Name and capability checks continue to use the canonical model name.
 func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (model.LLM, error) {
 	if cfg == nil {
 		cfg = &Config{}
@@ -108,11 +103,6 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 		}
 
 		client = newVertexClient(ctx, cfg)
-	case VariantVercelAIGateway:
-		if cfg.APIKey == "" {
-			return nil, errors.New("APIKey is required for Vercel AI Gateway")
-		}
-		client = newVercelGatewayClient(cfg)
 	case VariantAnthropicAPI:
 		client = newAPIClient(cfg)
 	default:
@@ -128,46 +118,20 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 		maxTokens = defaultMaxTokens
 	}
 
+	requestModel := cfg.RequestModel
+	if requestModel == "" {
+		requestModel = modelName
+	}
+
 	return &anthropicModel{
 		client:           client,
 		name:             modelName,
-		requestModel:     requestModelForVariant(modelName, variant),
+		requestModel:     requestModel,
 		variant:          variant,
 		defaultMaxTokens: maxTokens,
 		promptCaching:    cfg.PromptCaching,
 		retrySleep:       sleepWithContext,
 	}, nil
-}
-
-// newVercelGatewayClient creates a client for Vercel AI Gateway's
-// Anthropic-compatible API.
-func newVercelGatewayClient(cfg *Config) anthropic.Client {
-	return anthropic.NewClient(
-		option.WithAPIKey(cfg.APIKey),
-		option.WithBaseURL(vercelGatewayBaseURL(cfg)),
-	)
-}
-
-func vercelGatewayBaseURL(cfg *Config) string {
-	if cfg.BaseURL != "" {
-		return cfg.BaseURL
-	}
-	return defaultVercelGatewayURL
-}
-
-func requestModelForVariant(modelName anthropic.Model, variant string) anthropic.Model {
-	if variant != VariantVercelAIGateway {
-		return modelName
-	}
-
-	switch modelName {
-	case anthropic.ModelClaudeSonnet4_6:
-		return vercelClaudeSonnet46Model
-	case anthropic.ModelClaudeHaiku4_5:
-		return vercelClaudeHaiku45Model
-	default:
-		return modelName
-	}
 }
 
 // newAPIClient creates a client for the direct Anthropic API.

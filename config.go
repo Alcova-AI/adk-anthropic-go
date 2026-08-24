@@ -43,12 +43,11 @@ type PromptCachingConfig struct {
 	ConversationHistory *CacheBreakpoint
 }
 
-// Config holds configuration for creating a model through an Anthropic-compatible backend.
+// Config holds configuration for creating an Anthropic model.
 type Config struct {
-	// APIKey authenticates requests to the selected API backend.
+	// APIKey authenticates requests to the direct or Anthropic-compatible API.
 	// If not provided, it will be read from the ANTHROPIC_API_KEY environment variable.
-	// Environment fallback is only used when Variant is VariantAnthropicAPI.
-	// VariantVercelAIGateway requires an explicit API key.
+	// This is only used when Variant is VariantAnthropicAPI.
 	APIKey string
 
 	// VertexProjectID is the Google Cloud project ID for Vertex AI access.
@@ -63,7 +62,7 @@ type Config struct {
 	VertexLocation string
 
 	// Variant determines which backend to use for API calls.
-	// Valid values are VariantAnthropicAPI, VariantVertexAI, and VariantVercelAIGateway.
+	// Valid values are VariantAnthropicAPI and VariantVertexAI.
 	// If empty, the variant is determined from the ANTHROPIC_USE_VERTEX environment variable.
 	Variant string
 
@@ -75,9 +74,15 @@ type Config struct {
 	// GenerateContentConfig.MaxOutputTokens override.
 	DefaultMaxTokens int
 
-	// BaseURL overrides the API endpoint. VariantVercelAIGateway defaults to
-	// https://ai-gateway.vercel.sh when this is empty.
+	// BaseURL overrides the direct Anthropic API endpoint. This supports proxies
+	// and Anthropic-compatible APIs. It is ignored for Vertex AI.
 	BaseURL string
+
+	// RequestModel overrides the model identifier sent to the API. This lets a
+	// caller retain the canonical model name for Name and capability checks while
+	// using a provider-qualified identifier on an Anthropic-compatible API.
+	// When empty, the model passed to NewModel is sent unchanged.
+	RequestModel anthropic.Model
 
 	// PromptCaching configures optional prompt caching breakpoints.
 	// When nil (the default), no cache control is applied.
