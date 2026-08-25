@@ -29,6 +29,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/genai"
 )
 
 // Exact shape Vertex delivers when overload arrives after the 200 OK —
@@ -65,6 +66,22 @@ const thinkingThenOverloadSSE = "event: message_start\n" +
 	"event: content_block_delta\n" +
 	"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"weighing options\"}}\n\n" +
 	overloadedSSE
+
+const thinkingSuccessSSE = "event: message_start\n" +
+	"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"google/gemini-3.6-flash\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n" +
+	"event: content_block_start\n" +
+	"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n" +
+	"event: content_block_delta\n" +
+	"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"weighing options\"}}\n\n" +
+	"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+	"event: content_block_start\n" +
+	"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+	"event: content_block_delta\n" +
+	"data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n" +
+	"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n" +
+	"event: message_delta\n" +
+	"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n" +
+	"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 
 // newSSEServer answers the i-th request with bodies[i] (repeating the last
 // body once exhausted) and counts requests.
@@ -113,11 +130,21 @@ type streamPair struct {
 
 // collect drains a streaming GenerateContent call into its yielded pairs.
 func collect(ctx context.Context, m *anthropicModel) []streamPair {
+	return collectRequest(ctx, m, &model.LLMRequest{})
+}
+
+func collectRequest(ctx context.Context, m *anthropicModel, req *model.LLMRequest) []streamPair {
 	var pairs []streamPair
-	for resp, err := range m.GenerateContent(ctx, &model.LLMRequest{}, true) {
+	for resp, err := range m.GenerateContent(ctx, req, true) {
 		pairs = append(pairs, streamPair{resp, err})
 	}
 	return pairs
+}
+
+func collectIncludingThoughts(ctx context.Context, m *anthropicModel) []streamPair {
+	return collectRequest(ctx, m, &model.LLMRequest{Config: &genai.GenerateContentConfig{
+		ThinkingConfig: &genai.ThinkingConfig{IncludeThoughts: true},
+	}})
 }
 
 // sseFromPayloads frames raw stream-event payloads (as used by errors_test.go
@@ -243,7 +270,7 @@ func TestGenerateStream_NoRetryAfterThinkingOutput(t *testing.T) {
 	srv, requests := newSSEServer(t, thinkingThenOverloadSSE)
 	m, sleeps := newStreamTestModel(t, srv.URL)
 
-	pairs := collect(t.Context(), m)
+	pairs := collectIncludingThoughts(t.Context(), m)
 
 	if len(pairs) != 2 {
 		t.Fatalf("len(pairs) = %d, want 2 (thinking partial then error)", len(pairs))
@@ -260,6 +287,78 @@ func TestGenerateStream_NoRetryAfterThinkingOutput(t *testing.T) {
 	}
 	if len(*sleeps) != 0 {
 		t.Errorf("sleeps = %d, want 0", len(*sleeps))
+	}
+}
+
+func TestGenerateStream_RetriesAfterHiddenThinking(t *testing.T) {
+	srv, requests := newSSEServer(t, thinkingThenOverloadSSE, successSSE)
+	m, sleeps := newStreamTestModel(t, srv.URL)
+
+	pairs := collect(t.Context(), m)
+
+	if len(pairs) != 2 {
+		t.Fatalf("len(pairs) = %d, want 2 (text partial and final response)", len(pairs))
+	}
+	for _, pair := range pairs {
+		if pair.err != nil {
+			t.Fatalf("unexpected error: %v", pair.err)
+		}
+	}
+	if got := int(requests.Load()); got != 2 {
+		t.Errorf("requests = %d, want 2", got)
+	}
+	if len(*sleeps) != 1 {
+		t.Errorf("sleeps = %d, want 1", len(*sleeps))
+	}
+}
+
+func TestGenerateStream_HonoursIncludeThoughts(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		includeThoughts bool
+		wantPairs       int
+	}{
+		{name: "hidden", includeThoughts: false, wantPairs: 2},
+		{name: "included", includeThoughts: true, wantPairs: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newSSEServer(t, thinkingSuccessSSE)
+			m, _ := newStreamTestModel(t, srv.URL)
+			req := &model.LLMRequest{Config: &genai.GenerateContentConfig{
+				ThinkingConfig: &genai.ThinkingConfig{IncludeThoughts: tc.includeThoughts},
+			}}
+
+			pairs := collectRequest(t.Context(), m, req)
+
+			if len(pairs) != tc.wantPairs {
+				t.Fatalf("len(pairs) = %d, want %d", len(pairs), tc.wantPairs)
+			}
+			for _, pair := range pairs {
+				if pair.err != nil {
+					t.Fatalf("unexpected error: %v", pair.err)
+				}
+			}
+
+			if tc.includeThoughts {
+				if !pairs[0].resp.Partial || !pairs[0].resp.Content.Parts[0].Thought {
+					t.Errorf("pairs[0] = %+v, want partial thinking delta", pairs[0].resp)
+				}
+			} else if pairs[0].resp.Content.Parts[0].Text != "Hello" {
+				t.Errorf("pairs[0] = %+v, want first visible delta to be text", pairs[0].resp)
+			}
+
+			final := pairs[len(pairs)-1].resp
+			if !final.TurnComplete {
+				t.Error("final response TurnComplete = false, want true")
+			}
+			wantFinalParts := 1
+			if tc.includeThoughts {
+				wantFinalParts = 2
+			}
+			if len(final.Content.Parts) != wantFinalParts {
+				t.Fatalf("len(final.Content.Parts) = %d, want %d", len(final.Content.Parts), wantFinalParts)
+			}
+		})
 	}
 }
 
@@ -349,7 +448,7 @@ func TestGenerateStream_InterruptedOutputIsNotRetried(t *testing.T) {
 	srv, requests := newSSEServer(t, sseFromPayloads(t, interruptedToolCallStream))
 	m, sleeps := newStreamTestModel(t, srv.URL)
 
-	pairs := collect(t.Context(), m)
+	pairs := collectIncludingThoughts(t.Context(), m)
 
 	// The fixture streams a thinking delta and a text delta before the
 	// truncated tool call, so those arrive as partials ahead of the error.

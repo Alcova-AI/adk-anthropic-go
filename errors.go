@@ -38,9 +38,10 @@ type OutputInterruptedError struct {
 	StopReason anthropic.StopReason
 
 	// Parts holds the salvaged content that survived intact, converted to
-	// genai parts in stream order: thinking parts (with signatures) and any
-	// completed text or tool-call parts. The truncated tool call is NOT
-	// included here — it is exposed as data via ToolName/PartialInput.
+	// genai parts in stream order: signed or redacted provider-state thoughts,
+	// visible thoughts when requested, and any completed text or tool-call
+	// parts. The truncated tool call is NOT included here — it is exposed as
+	// data via ToolName/PartialInput.
 	Parts []*genai.Part
 
 	// ToolName is the name of the tool call whose input was cut off, if the
@@ -77,8 +78,11 @@ func (e *OutputInterruptedError) Unwrap() error { return e.Cause }
 // tool call's details. cause is the underlying error that surfaced the
 // interruption (the SDK accumulator failure), or nil when the interruption was
 // detected directly from the stop reason.
-func newOutputInterruptedError(msg *anthropic.Message, cause error) *OutputInterruptedError {
+func newOutputInterruptedError(msg *anthropic.Message, cause error, includeThoughts bool) *OutputInterruptedError {
 	salvaged := converters.SalvageInterruptedMessage(msg)
+	if !includeThoughts {
+		salvaged.Parts = filterThoughtParts(salvaged.Parts)
+	}
 
 	var stopReason anthropic.StopReason
 	if msg != nil {
@@ -103,9 +107,9 @@ func newOutputInterruptedError(msg *anthropic.Message, cause error) *OutputInter
 // would hide the real cause from callers doing errors.As. Only return the
 // typed error when the partial message actually shows a truncated tool call;
 // otherwise wrap the original error unchanged.
-func classifyAccumulateError(msg *anthropic.Message, cause error) error {
+func classifyAccumulateError(msg *anthropic.Message, cause error, includeThoughts bool) error {
 	if converters.HasIncompleteToolInput(msg) {
-		return newOutputInterruptedError(msg, cause)
+		return newOutputInterruptedError(msg, cause, includeThoughts)
 	}
 	return fmt.Errorf("failed to accumulate message: %w", cause)
 }
