@@ -1,5 +1,14 @@
 # Changelog
 
+## [v2.0.9] - Add request model overrides
+
+- Add `Config.RequestModel` for Anthropic-compatible APIs that require a different model identifier on the wire. Capability checks and `Name()` continue to use the canonical model passed to `NewModel`.
+- Reject unknown backend variants during model construction.
+
+## [v2.0.8] - Preserve cache creation usage
+
+- Preserve aggregate, five-minute, and one-hour Anthropic cache creation token counts in `LLMResponse.CustomMetadata` for streaming and non-streaming responses.
+
 ## [v2.0.7] - Retry mid-stream overload errors
 
 - Retry streaming requests when Anthropic reports `overloaded_error` mid-stream. Vertex AI can accept a streaming request (HTTP 200 at the header level) and then deliver `{"type":"error","error":{"type":"overloaded_error"}}` as an SSE `error` event; the SDK's HTTP-level retries never see it because the request already succeeded. `generateStream` now makes up to 3 attempts with ~1s/~2s jittered backoff, aborting promptly on context cancellation — but only while nothing has been yielded to the consumer. Once a text or thinking delta has streamed, a retry would duplicate content, so the error surfaces immediately as before. The retry is scoped to overloads delivered inside an HTTP 200 stream: a direct-API HTTP 529 has already exhausted the SDK's own retries and is not retried again by the adapter. On exhaustion the error is wrapped exactly as before (`stream error: %w`), preserving caller-side `errors.As` detection and error grouping. This is a deliberate, narrow exception to the adapter's "no continuation decisions" rule (v2.0.3): a pre-content overload retry is invisible to callers and carries no continuation semantics. The non-streaming path is unchanged — overload there arrives as HTTP 529 and is already covered by the SDK's default retries.

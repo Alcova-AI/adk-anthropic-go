@@ -43,9 +43,9 @@ type PromptCachingConfig struct {
 	ConversationHistory *CacheBreakpoint
 }
 
-// Config holds configuration for creating an Anthropic Claude model.
+// Config holds configuration for creating an Anthropic model.
 type Config struct {
-	// APIKey is the Anthropic API key for direct API access.
+	// APIKey authenticates requests to the direct or Anthropic-compatible API.
 	// If not provided, it will be read from the ANTHROPIC_API_KEY environment variable.
 	// This is only used when Variant is VariantAnthropicAPI.
 	APIKey string
@@ -74,7 +74,15 @@ type Config struct {
 	// GenerateContentConfig.MaxOutputTokens override.
 	DefaultMaxTokens int
 
+	// BaseURL overrides the direct Anthropic API endpoint. This supports proxies
+	// and Anthropic-compatible APIs. It is ignored for Vertex AI.
 	BaseURL string
+
+	// RequestModel overrides the model identifier sent to the API. This lets a
+	// caller retain the canonical model name for Name and capability checks while
+	// using a provider-qualified identifier on an Anthropic-compatible API.
+	// When empty, the model passed to NewModel is sent unchanged.
+	RequestModel anthropic.Model
 
 	// PromptCaching configures optional prompt caching breakpoints.
 	// When nil (the default), no cache control is applied.

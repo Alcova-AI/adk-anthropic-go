@@ -46,8 +46,11 @@ const (
 )
 
 type anthropicModel struct {
-	client           anthropic.Client
-	name             anthropic.Model
+	client anthropic.Client
+	// canonicalModel is exposed through Name and controls local capabilities.
+	canonicalModel anthropic.Model
+	// requestModel is the model identifier sent to the API.
+	requestModel     anthropic.Model
 	variant          string
 	defaultMaxTokens int
 	promptCaching    *PromptCachingConfig
@@ -57,7 +60,7 @@ type anthropicModel struct {
 	retrySleep func(ctx context.Context, d time.Duration) error
 }
 
-// NewModel returns [model.LLM], backed by Anthropic Claude.
+// NewModel returns [model.LLM], backed by an Anthropic-compatible API.
 //
 // It creates an Anthropic client based on the provided configuration.
 // If Variant is not specified, it checks the ANTHROPIC_USE_VERTEX environment variable.
@@ -67,6 +70,10 @@ type anthropicModel struct {
 //
 // For Vertex AI, set VertexProjectID and VertexLocation in the config or use
 // GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION environment variables.
+//
+// For an Anthropic-compatible API, set BaseURL and APIKey. Set RequestModel
+// when the API expects a different model identifier from the canonical name.
+// Name and capability checks continue to use the canonical model name.
 func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (model.LLM, error) {
 	if cfg == nil {
 		cfg = &Config{}
@@ -98,8 +105,10 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 		}
 
 		client = newVertexClient(ctx, cfg)
-	default:
+	case VariantAnthropicAPI:
 		client = newAPIClient(cfg)
+	default:
+		return nil, fmt.Errorf("unsupported Anthropic variant %q", variant)
 	}
 
 	// max_tokens precedence: a per-request GenerateContentConfig.MaxOutputTokens
@@ -111,9 +120,15 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 		maxTokens = defaultMaxTokens
 	}
 
+	requestModel := cfg.RequestModel
+	if requestModel == "" {
+		requestModel = modelName
+	}
+
 	return &anthropicModel{
 		client:           client,
-		name:             modelName,
+		canonicalModel:   modelName,
+		requestModel:     requestModel,
 		variant:          variant,
 		defaultMaxTokens: maxTokens,
 		promptCaching:    cfg.PromptCaching,
@@ -160,7 +175,14 @@ func newVertexClient(ctx context.Context, cfg *Config) anthropic.Client {
 
 // Name returns the model name.
 func (m *anthropicModel) Name() string {
-	return string(m.name)
+	return string(m.canonicalModel)
+}
+
+func (m *anthropicModel) wireModel() anthropic.Model {
+	if m.requestModel != "" {
+		return m.requestModel
+	}
+	return m.canonicalModel
 }
 
 // GenerateContent calls the Anthropic model.
@@ -365,7 +387,7 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 	}
 
 	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model(m.name),
+		Model:     m.wireModel(),
 		Messages:  messages,
 		MaxTokens: int64(m.defaultMaxTokens),
 	}
@@ -437,7 +459,7 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 	if req.Config != nil {
 		thinkingCfg = req.Config.ThinkingConfig
 	}
-	mapping := converters.ThinkingConfigToAnthropic(thinkingCfg, params.Model)
+	mapping := converters.ThinkingConfigToAnthropic(thinkingCfg, m.canonicalModel)
 	params.Thinking = mapping.Thinking
 	if mapping.Effort != "" {
 		params.OutputConfig.Effort = mapping.Effort

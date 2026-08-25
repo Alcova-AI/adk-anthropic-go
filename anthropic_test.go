@@ -15,6 +15,10 @@
 package adkanthropic
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -117,9 +121,126 @@ func TestNewModel_VertexAI_MissingConfig(t *testing.T) {
 	}
 }
 
+func TestNewModel_RejectsUnknownVariant(t *testing.T) {
+	_, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
+		Variant: "UNKNOWN",
+	})
+	if err == nil || !strings.Contains(err.Error(), `unsupported Anthropic variant "UNKNOWN"`) {
+		t.Fatalf("NewModel() error = %v, want unsupported variant error", err)
+	}
+}
+
+func TestConvertRequest_RequestModelOverride(t *testing.T) {
+	tests := []struct {
+		name         string
+		requestModel anthropic.Model
+		wantModel    anthropic.Model
+	}{
+		{
+			name:      "uses canonical model by default",
+			wantModel: anthropic.ModelClaudeSonnet4_6,
+		},
+		{
+			name:         "uses request model override",
+			requestModel: "provider/claude-sonnet-4.6",
+			wantModel:    "provider/claude-sonnet-4.6",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
+				APIKey:       "test-api-key",
+				Variant:      VariantAnthropicAPI,
+				RequestModel: tt.requestModel,
+			})
+			if err != nil {
+				t.Fatalf("NewModel() error = %v", err)
+			}
+			if llm.Name() != string(anthropic.ModelClaudeSonnet4_6) {
+				t.Errorf("Name() = %q, want canonical name %q", llm.Name(), anthropic.ModelClaudeSonnet4_6)
+			}
+
+			params, err := llm.(*anthropicModel).convertRequest(&model.LLMRequest{
+				Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
+			})
+			if err != nil {
+				t.Fatalf("convertRequest() error = %v", err)
+			}
+			if params.Model != tt.wantModel {
+				t.Errorf("request model = %q, want %q", params.Model, tt.wantModel)
+			}
+			if params.Thinking.OfAdaptive == nil {
+				t.Error("expected canonical Sonnet name to retain adaptive thinking defaults")
+			}
+		})
+	}
+}
+
+func TestNewModel_AnthropicCompatibleEndpointUsesConfiguredRequest(t *testing.T) {
+	type capturedRequest struct {
+		path   string
+		apiKey string
+		model  string
+	}
+	captured := make(chan capturedRequest, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var requestBody struct {
+			Model string `json:"model"`
+		}
+		if err := json.Unmarshal(body, &requestBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		captured <- capturedRequest{
+			path:   r.URL.Path,
+			apiKey: r.Header.Get("x-api-key"),
+			model:  requestBody.Model,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","model":"anthropic/claude-sonnet-4.6","content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
+		APIKey:       "gateway-key",
+		Variant:      VariantAnthropicAPI,
+		BaseURL:      srv.URL,
+		RequestModel: "provider/claude-sonnet-4.6",
+	})
+	if err != nil {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	for _, err := range llm.GenerateContent(t.Context(), &model.LLMRequest{
+		Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
+	}, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent() error = %v", err)
+		}
+	}
+
+	got := <-captured
+	if got.path != "/v1/messages" {
+		t.Errorf("request path = %q, want /v1/messages", got.path)
+	}
+	if got.apiKey != "gateway-key" {
+		t.Errorf("x-api-key = %q, want gateway-key", got.apiKey)
+	}
+	if got.model != "provider/claude-sonnet-4.6" {
+		t.Errorf("request model = %q, want %q", got.model, "provider/claude-sonnet-4.6")
+	}
+}
+
 func TestConvertRequest_VertexAI_SetsOutputConfig(t *testing.T) {
 	m := &anthropicModel{
-		name:             "claude-haiku-4-5-20251001",
+		canonicalModel:   "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -154,7 +275,7 @@ func TestConvertRequest_VertexAI_SetsOutputConfig(t *testing.T) {
 
 func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse(t *testing.T) {
 	m := &anthropicModel{
-		name:             "claude-haiku-4-5-20251001",
+		canonicalModel:   "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -211,7 +332,7 @@ func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse(t *testin
 
 func TestConvertRequest_VertexAI_TransformsUnsupportedSchemaConstraints(t *testing.T) {
 	m := &anthropicModel{
-		name:             "claude-haiku-4-5-20251001",
+		canonicalModel:   "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -315,7 +436,7 @@ func assertAdditionalPropertiesFalse(t *testing.T, schema map[string]any, label 
 
 func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse_AnyOf(t *testing.T) {
 	m := &anthropicModel{
-		name:             "claude-haiku-4-5-20251001",
+		canonicalModel:   "claude-haiku-4-5-20251001",
 		variant:          VariantVertexAI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -368,7 +489,7 @@ func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse_AnyOf(t *
 
 func TestConvertRequest_DirectAPI_SetsOutputConfig(t *testing.T) {
 	m := &anthropicModel{
-		name:             "claude-haiku-4-5-20251001",
+		canonicalModel:   "claude-haiku-4-5-20251001",
 		variant:          VariantAnthropicAPI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -437,7 +558,7 @@ func TestConvertRequest_DefaultsToAdaptiveOnCapableModel(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &anthropicModel{
 				// Adaptive-capable model — unversioned SDK alias.
-				name:             "claude-sonnet-4-6",
+				canonicalModel:   "claude-sonnet-4-6",
 				variant:          VariantAnthropicAPI,
 				defaultMaxTokens: testMaxTokens,
 			}
@@ -448,7 +569,7 @@ func TestConvertRequest_DefaultsToAdaptiveOnCapableModel(t *testing.T) {
 			}
 
 			if params.Thinking.OfAdaptive == nil {
-				t.Fatalf("expected adaptive thinking on %s, got Thinking=%+v", m.name, params.Thinking)
+				t.Fatalf("expected adaptive thinking on %s, got Thinking=%+v", m.canonicalModel, params.Thinking)
 			}
 		})
 	}
@@ -462,7 +583,7 @@ func TestConvertRequest_DefaultsToAdaptiveOnCapableModel(t *testing.T) {
 func TestConvertRequest_NilConfigLeavesThinkingOffOnNonAdaptive(t *testing.T) {
 	m := &anthropicModel{
 		// Manual-only model — adaptive is not supported.
-		name:             "claude-haiku-4-5",
+		canonicalModel:   "claude-haiku-4-5",
 		variant:          VariantAnthropicAPI,
 		defaultMaxTokens: testMaxTokens,
 	}
@@ -479,10 +600,10 @@ func TestConvertRequest_NilConfigLeavesThinkingOffOnNonAdaptive(t *testing.T) {
 	}
 
 	if params.Thinking.OfAdaptive != nil {
-		t.Errorf("non-adaptive model %s should not default to adaptive thinking, got OfAdaptive=%+v", m.name, params.Thinking.OfAdaptive)
+		t.Errorf("non-adaptive model %s should not default to adaptive thinking, got OfAdaptive=%+v", m.canonicalModel, params.Thinking.OfAdaptive)
 	}
 	if params.Thinking.OfEnabled != nil {
-		t.Errorf("non-adaptive model %s should not default to manual thinking budget, got OfEnabled=%+v", m.name, params.Thinking.OfEnabled)
+		t.Errorf("non-adaptive model %s should not default to manual thinking budget, got OfEnabled=%+v", m.canonicalModel, params.Thinking.OfEnabled)
 	}
 }
 
@@ -581,7 +702,7 @@ func TestConvertRequest_ForcedToolUseDropsThinking(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &anthropicModel{
-				name:             tc.modelName,
+				canonicalModel:   tc.modelName,
 				variant:          VariantAnthropicAPI,
 				defaultMaxTokens: testMaxTokens,
 			}
@@ -649,7 +770,7 @@ func TestConvertRequest_AutoToolUseKeepsThinking(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &anthropicModel{
-				name:             "claude-sonnet-4-6",
+				canonicalModel:   "claude-sonnet-4-6",
 				variant:          VariantAnthropicAPI,
 				defaultMaxTokens: testMaxTokens,
 			}
