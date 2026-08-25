@@ -135,14 +135,14 @@ type Config struct {
 	// Backend variant: VariantAnthropicAPI or VariantVertexAI
 	Variant string
 
-	// Optional endpoint for proxies and Anthropic-compatible APIs
+	// Optional endpoint for proxies and Anthropic-compatible APIs.
+	// Ignored for Vertex AI.
 	BaseURL string
 
 	// Optional model identifier sent to the API
 	RequestModel anthropic.Model
 
-	// Default max tokens (default: the model's output ceiling —
-	// 128000 for Sonnet 4.6 / Opus 4.x, 64000 for Haiku 4.5 and unknown models)
+	// Default max tokens (default: 16384)
 	DefaultMaxTokens int
 }
 ```
