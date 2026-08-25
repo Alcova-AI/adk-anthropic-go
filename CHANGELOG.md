@@ -1,9 +1,13 @@
 # Changelog
 
-## [v2.0.8] - Add request model overrides
+## [v2.0.9] - Add request model overrides
 
 - Add `Config.RequestModel` for Anthropic-compatible APIs that require a different model identifier on the wire. Capability checks and `Name()` continue to use the canonical model passed to `NewModel`.
 - Reject unknown backend variants during model construction.
+
+## [v2.0.8] - Preserve cache creation usage
+
+- Preserve aggregate, five-minute, and one-hour Anthropic cache creation token counts in `LLMResponse.CustomMetadata` for streaming and non-streaming responses.
 
 ## [v2.0.7] - Retry mid-stream overload errors
 
