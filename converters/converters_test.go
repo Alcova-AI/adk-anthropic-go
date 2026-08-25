@@ -1300,6 +1300,50 @@ func TestMessageToLLMResponse_SetsModelVersion(t *testing.T) {
 	}
 }
 
+func TestMessageToLLMResponse_CacheCreationMetadata(t *testing.T) {
+	t.Run("populated cache creation usage", func(t *testing.T) {
+		msg := &anthropic.Message{
+			Usage: anthropic.Usage{
+				CacheCreationInputTokens: 60,
+				CacheCreation: anthropic.CacheCreation{
+					Ephemeral5mInputTokens: 40,
+					Ephemeral1hInputTokens: 20,
+				},
+			},
+		}
+
+		resp, err := converters.MessageToLLMResponse(msg)
+		if err != nil {
+			t.Fatalf("MessageToLLMResponse() error = %v", err)
+		}
+
+		want := map[string]any{
+			"anthropic.usage.cache_creation_input_tokens":    int64(60),
+			"anthropic.usage.cache_creation_5m_input_tokens": int64(40),
+			"anthropic.usage.cache_creation_1h_input_tokens": int64(20),
+		}
+		if diff := cmp.Diff(want, resp.CustomMetadata); diff != "" {
+			t.Errorf("CustomMetadata mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("zero values remain present", func(t *testing.T) {
+		resp, err := converters.MessageToLLMResponse(&anthropic.Message{})
+		if err != nil {
+			t.Fatalf("MessageToLLMResponse() error = %v", err)
+		}
+
+		want := map[string]any{
+			"anthropic.usage.cache_creation_input_tokens":    int64(0),
+			"anthropic.usage.cache_creation_5m_input_tokens": int64(0),
+			"anthropic.usage.cache_creation_1h_input_tokens": int64(0),
+		}
+		if diff := cmp.Diff(want, resp.CustomMetadata); diff != "" {
+			t.Errorf("CustomMetadata mismatch (-want +got):\n%s", diff)
+		}
+	})
+}
+
 func TestContentBlockToGenaiPart_WebSearchToolResult(t *testing.T) {
 	blockJSON := `{
 		"type": "web_search_tool_result",

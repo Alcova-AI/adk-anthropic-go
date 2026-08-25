@@ -25,7 +25,15 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
+const (
+	cacheCreationInputTokensMetadataKey   = "anthropic.usage.cache_creation_input_tokens"
+	cacheCreation5mInputTokensMetadataKey = "anthropic.usage.cache_creation_5m_input_tokens"
+	cacheCreation1hInputTokensMetadataKey = "anthropic.usage.cache_creation_1h_input_tokens"
+)
+
 // MessageToLLMResponse converts an Anthropic Message to a model.LLMResponse.
+// Both non-streaming replies and final accumulated streaming replies use this
+// converter, so usage metadata has the same contract on both paths.
 func MessageToLLMResponse(msg *anthropic.Message) (*model.LLMResponse, error) {
 	if msg == nil {
 		return nil, fmt.Errorf("nil message received")
@@ -54,10 +62,11 @@ func MessageToLLMResponse(msg *anthropic.Message) (*model.LLMResponse, error) {
 	}
 
 	resp := &model.LLMResponse{
-		Content:       content,
-		UsageMetadata: UsageToMetadata(msg.Usage),
-		FinishReason:  StopReasonToFinishReason(msg.StopReason),
-		ModelVersion:  string(msg.Model),
+		Content:        content,
+		UsageMetadata:  UsageToMetadata(msg.Usage),
+		CustomMetadata: usageToCustomMetadata(msg.Usage),
+		FinishReason:   StopReasonToFinishReason(msg.StopReason),
+		ModelVersion:   string(msg.Model),
 	}
 
 	if len(allCitations) > 0 {
@@ -65,6 +74,14 @@ func MessageToLLMResponse(msg *anthropic.Message) (*model.LLMResponse, error) {
 	}
 
 	return resp, nil
+}
+
+func usageToCustomMetadata(usage anthropic.Usage) map[string]any {
+	return map[string]any{
+		cacheCreationInputTokensMetadataKey:   usage.CacheCreationInputTokens,
+		cacheCreation5mInputTokensMetadataKey: usage.CacheCreation.Ephemeral5mInputTokens,
+		cacheCreation1hInputTokensMetadataKey: usage.CacheCreation.Ephemeral1hInputTokens,
+	}
 }
 
 // InterruptedContent holds what could be salvaged from a message whose
