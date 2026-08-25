@@ -151,6 +151,7 @@ func TestConvertRequest_RequestModelOverride(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
 				APIKey:       "test-api-key",
+				Variant:      VariantAnthropicAPI,
 				RequestModel: tt.requestModel,
 			})
 			if err != nil {
@@ -209,6 +210,7 @@ func TestNewModel_AnthropicCompatibleEndpointUsesConfiguredRequest(t *testing.T)
 
 	llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
 		APIKey:       "gateway-key",
+		Variant:      VariantAnthropicAPI,
 		BaseURL:      srv.URL,
 		RequestModel: "provider/claude-sonnet-4.6",
 	})
