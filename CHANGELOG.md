@@ -1,5 +1,10 @@
 # Changelog
 
+## [v2.0.10] - Support Gemini gateway compatibility
+
+- Preserve multi-type JSON Schema definitions as Anthropic `anyOf` schemas so gateway-routed Gemini tool requests retain each allowed type.
+- Respect `IncludeThoughts: false` when Anthropic-compatible gateways return unsigned Gemini reasoning. Signed and redacted provider state remains unchanged so callers can include it in later requests.
+
 ## [v2.0.9] - Add request model overrides
 
 - Add `Config.RequestModel` for Anthropic-compatible APIs that require a different model identifier on the wire. Capability checks and `Name()` continue to use the canonical model passed to `NewModel`.
