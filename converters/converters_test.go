@@ -923,6 +923,49 @@ func TestFunctionDeclarationToTool_JsonSchemaNoRequired(t *testing.T) {
 	}
 }
 
+func TestFunctionDeclarationToTool_JsonSchemaMultipleTypesUsesAnyOf(t *testing.T) {
+	type todoItem struct {
+		Content string `json:"content"`
+	}
+	type todoWriteInput struct {
+		Todos []todoItem `json:"todos" jsonschema:"list of todo items to create or update"`
+	}
+
+	schema, err := jsonschema.For[todoWriteInput](nil)
+	if err != nil {
+		t.Fatalf("jsonschema.For[todoWriteInput]() failed: %v", err)
+	}
+
+	result := converters.FunctionDeclarationToTool(&genai.FunctionDeclaration{
+		Name:                 "todo_write",
+		ParametersJsonSchema: schema,
+	})
+	properties, ok := result.OfTool.InputSchema.Properties.(map[string]any)
+	if !ok {
+		t.Fatalf("expected Properties to be map[string]any, got %T", result.OfTool.InputSchema.Properties)
+	}
+
+	want := map[string]any{
+		"anyOf": []map[string]any{
+			{"type": "null"},
+			{
+				"type":        "array",
+				"description": "list of todo items to create or update",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"content": map[string]any{"type": "string"},
+					},
+					"required": []string{"content"},
+				},
+			},
+		},
+	}
+	if diff := cmp.Diff(want, properties["todos"]); diff != "" {
+		t.Errorf("todos schema mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestFunctionDeclarationToTool_ParametersJsonSchemaMap(t *testing.T) {
 	tests := []struct {
 		name         string

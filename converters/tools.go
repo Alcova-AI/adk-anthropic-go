@@ -138,11 +138,32 @@ func jsonSchemaPropertyToMap(schema *jsonschema.Schema) map[string]any {
 		return nil
 	}
 
-	result := make(map[string]any)
+	if len(schema.Types) > 0 {
+		anyOf := make([]map[string]any, 0, len(schema.Types))
+		for _, schemaType := range schema.Types {
+			branch := map[string]any{"type": schemaType}
+			if schemaType != "null" {
+				branch = jsonSchemaPropertyFieldsToMap(schema)
+				branch["type"] = schemaType
+			}
+			anyOf = append(anyOf, branch)
+		}
+		return map[string]any{"anyOf": anyOf}
+	}
+
+	result := jsonSchemaPropertyFieldsToMap(schema)
 
 	if schema.Type != "" {
 		result["type"] = string(schema.Type)
 	}
+
+	return result
+}
+
+// jsonSchemaPropertyFieldsToMap converts fields shared by a schema's possible types.
+func jsonSchemaPropertyFieldsToMap(schema *jsonschema.Schema) map[string]any {
+	result := make(map[string]any)
+
 	if schema.Description != "" {
 		result["description"] = schema.Description
 	}

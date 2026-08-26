@@ -238,6 +238,82 @@ func TestNewModel_AnthropicCompatibleEndpointUsesConfiguredRequest(t *testing.T)
 	}
 }
 
+func TestFilterThoughtParts_PreservesProviderState(t *testing.T) {
+	unsigned := &genai.Part{Thought: true, Text: "Vercel Gemini reasoning"}
+	signed := &genai.Part{Thought: true, Text: "signed reasoning", ThoughtSignature: []byte("sig")}
+	redacted := &genai.Part{
+		Thought:      true,
+		Text:         "[thinking redacted]",
+		PartMetadata: map[string]any{"anthropic.redacted_thinking_data": "opaque"},
+	}
+	text := &genai.Part{Text: "answer"}
+
+	got := filterThoughtParts([]*genai.Part{unsigned, signed, redacted, text})
+
+	if len(got) != 3 {
+		t.Fatalf("len(got) = %d, want 3", len(got))
+	}
+	if got[0] != signed || got[0].Text != "signed reasoning" {
+		t.Errorf("got[0] = %+v, want signed thinking preserved unchanged", got[0])
+	}
+	if got[1] != redacted {
+		t.Errorf("got[1] = %+v, want redacted provider state preserved", got[1])
+	}
+	if got[2] != text {
+		t.Errorf("got[2] = %+v, want answer text", got[2])
+	}
+}
+
+func TestGenerateContent_HonoursIncludeThoughts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","model":"google/gemini-3.6-flash","content":[{"type":"thinking","thinking":"Vercel Gemini reasoning","signature":""},{"type":"text","text":"Hello"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":2}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
+		APIKey:  "gateway-key",
+		Variant: VariantAnthropicAPI,
+		BaseURL: srv.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	for _, tc := range []struct {
+		name            string
+		includeThoughts bool
+		wantParts       int
+	}{
+		{name: "hidden", includeThoughts: false, wantParts: 1},
+		{name: "included", includeThoughts: true, wantParts: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &model.LLMRequest{Config: &genai.GenerateContentConfig{
+				ThinkingConfig: &genai.ThinkingConfig{IncludeThoughts: tc.includeThoughts},
+			}}
+
+			var got *model.LLMResponse
+			for resp, err := range llm.GenerateContent(t.Context(), req, false) {
+				if err != nil {
+					t.Fatalf("GenerateContent() error = %v", err)
+				}
+				got = resp
+			}
+
+			if got == nil || got.Content == nil {
+				t.Fatal("GenerateContent() returned no content")
+			}
+			if len(got.Content.Parts) != tc.wantParts {
+				t.Fatalf("len(got.Content.Parts) = %d, want %d", len(got.Content.Parts), tc.wantParts)
+			}
+			if got.Content.Parts[len(got.Content.Parts)-1].Text != "Hello" {
+				t.Errorf("last part = %+v, want answer text", got.Content.Parts[len(got.Content.Parts)-1])
+			}
+		})
+	}
+}
+
 func TestConvertRequest_VertexAI_SetsOutputConfig(t *testing.T) {
 	m := &anthropicModel{
 		canonicalModel:   "claude-haiku-4-5-20251001",

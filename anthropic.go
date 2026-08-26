@@ -215,8 +215,36 @@ func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert response: %w", err)
 	}
+	filterResponseThoughts(resp, requestIncludesThoughts(req))
 
 	return resp, nil
+}
+
+func requestIncludesThoughts(req *model.LLMRequest) bool {
+	return req != nil && req.Config != nil && req.Config.ThinkingConfig != nil &&
+		req.Config.ThinkingConfig.IncludeThoughts
+}
+
+// filterResponseThoughts enforces IncludeThoughts on providers that do not.
+// Vercel's Anthropic-compatible endpoint can return unsigned Gemini reasoning
+// blocks even when thinking.display is "omitted". Those blocks are display-only
+// and safe to discard. Signed thinking and redacted metadata are provider state
+// that must be replayed unchanged on later requests, so they are always kept.
+func filterResponseThoughts(resp *model.LLMResponse, includeThoughts bool) {
+	if includeThoughts || resp == nil || resp.Content == nil {
+		return
+	}
+	resp.Content.Parts = filterThoughtParts(resp.Content.Parts)
+}
+
+func filterThoughtParts(parts []*genai.Part) []*genai.Part {
+	filtered := make([]*genai.Part, 0, len(parts))
+	for _, part := range parts {
+		if part == nil || !part.Thought || len(part.ThoughtSignature) > 0 || len(part.PartMetadata) > 0 {
+			filtered = append(filtered, part)
+		}
+	}
+	return filtered
 }
 
 // generateStream returns a stream of responses from the model.
@@ -234,8 +262,9 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 		// returns nil. This is a deliberate, narrow exception to the adapter's
 		// "no continuation decisions" rule — a pre-content retry is invisible
 		// to callers and carries no continuation semantics.
+		includeThoughts := requestIncludesThoughts(req)
 		for attempt := 1; ; attempt++ {
-			streamErr := m.streamOnce(ctx, params, yield)
+			streamErr := m.streamOnce(ctx, params, includeThoughts, yield)
 			if streamErr == nil {
 				return
 			}
@@ -263,7 +292,12 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 // generateStream may safely retry without duplicating output. Every other
 // outcome (success, consumer stop, post-content failure, interruption) is
 // fully handled here and signalled by a nil return.
-func (m *anthropicModel) streamOnce(ctx context.Context, params anthropic.MessageNewParams, yield func(*model.LLMResponse, error) bool) error {
+func (m *anthropicModel) streamOnce(
+	ctx context.Context,
+	params anthropic.MessageNewParams,
+	includeThoughts bool,
+	yield func(*model.LLMResponse, error) bool,
+) error {
 	stream := m.client.Messages.NewStreaming(ctx, params)
 	// Next() leaves the response body open on the SSE error-event and
 	// consumer-stop paths; without this, each retried attempt would leak its
@@ -287,7 +321,7 @@ func (m *anthropicModel) streamOnce(ctx context.Context, params anthropic.Messag
 		// accumulation failure keeps its original error so it isn't
 		// misdiagnosed as an interruption.
 		if err := message.Accumulate(event); err != nil {
-			yield(nil, classifyAccumulateError(&message, err))
+			yield(nil, classifyAccumulateError(&message, err, includeThoughts))
 			return nil
 		}
 
@@ -303,6 +337,11 @@ func (m *anthropicModel) streamOnce(ctx context.Context, params anthropic.Messag
 					return nil
 				}
 			case anthropic.ThinkingDelta:
+				if !includeThoughts {
+					// The signature arrives in a later delta and is retained from the
+					// final accumulated block. Do not expose provisional reasoning text.
+					continue
+				}
 				yielded = true
 				resp := converters.StreamThinkingDeltaToPartialResponse(delta.Thinking)
 				if !yield(resp, nil) {
@@ -329,7 +368,7 @@ func (m *anthropicModel) streamOnce(ctx context.Context, params anthropic.Messag
 	// interruption for our purposes — it converts normally below and the
 	// harness reacts off the mapped max_tokens FinishReason.
 	if message.StopReason == anthropic.StopReasonMaxTokens && converters.HasIncompleteToolInput(&message) {
-		yield(nil, newOutputInterruptedError(&message, nil))
+		yield(nil, newOutputInterruptedError(&message, nil, includeThoughts))
 		return nil
 	}
 
@@ -339,6 +378,7 @@ func (m *anthropicModel) streamOnce(ctx context.Context, params anthropic.Messag
 		yield(nil, fmt.Errorf("failed to convert stream response: %w", err))
 		return nil
 	}
+	filterResponseThoughts(finalResp, includeThoughts)
 	finalResp.TurnComplete = true
 	yield(finalResp, nil)
 	return nil

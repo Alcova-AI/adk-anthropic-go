@@ -17,6 +17,7 @@ package adkanthropic
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -75,7 +76,7 @@ func TestNewOutputInterruptedError_FromAccumulateFailure(t *testing.T) {
 		t.Fatal("expected Accumulate to fail on the truncated tool input, got nil")
 	}
 
-	err := newOutputInterruptedError(msg, accErr)
+	err := newOutputInterruptedError(msg, accErr, true)
 
 	if err.StopReason != anthropic.StopReasonMaxTokens {
 		t.Errorf("StopReason = %q, want %q", err.StopReason, anthropic.StopReasonMaxTokens)
@@ -118,6 +119,35 @@ func TestNewOutputInterruptedError_FromAccumulateFailure(t *testing.T) {
 	}
 }
 
+func TestNewOutputInterruptedError_HidesUnsignedThoughts(t *testing.T) {
+	unsignedStream := make([]string, 0, len(interruptedToolCallStream)-1)
+	for _, payload := range interruptedToolCallStream {
+		if !strings.Contains(payload, `"type":"signature_delta"`) {
+			unsignedStream = append(unsignedStream, payload)
+		}
+	}
+
+	msg, accErr := accumulateEvents(t, unsignedStream)
+	if accErr == nil {
+		t.Fatal("expected Accumulate to fail on the truncated tool input, got nil")
+	}
+
+	err := newOutputInterruptedError(msg, accErr, false)
+
+	if len(err.Parts) != 2 {
+		t.Fatalf("len(Parts) = %d, want 2 (text and completed tool call)", len(err.Parts))
+	}
+	if err.Parts[0].Thought || err.Parts[0].Text != "Saving the file now." {
+		t.Errorf("Parts[0] = %+v, want completed text without unsigned thinking", err.Parts[0])
+	}
+	if fc := err.Parts[1].FunctionCall; fc == nil || fc.Name != "lookup" || fc.ID != "toolu_ok" {
+		t.Errorf("Parts[1] = %+v, want completed tool call 'lookup'", err.Parts[1])
+	}
+	if err.ToolName != "save_file" || err.PartialInput != `{"path": "/reports/summ` {
+		t.Errorf("interrupted tool = %q input %q, want save_file with partial input", err.ToolName, err.PartialInput)
+	}
+}
+
 func TestNewOutputInterruptedError_MidThinkingNoToolFields(t *testing.T) {
 	// Cut off mid-thinking, before any tool call: the message is valid JSON so
 	// Accumulate succeeds, but if a caller constructs the typed error from this
@@ -137,7 +167,7 @@ func TestNewOutputInterruptedError_MidThinkingNoToolFields(t *testing.T) {
 		t.Fatalf("Accumulate should succeed on a valid mid-thinking message, got %v", accErr)
 	}
 
-	err := newOutputInterruptedError(msg, nil)
+	err := newOutputInterruptedError(msg, nil, true)
 
 	if err.ToolName != "" || err.ToolID != "" || err.PartialInput != "" {
 		t.Errorf("tool fields should be empty for a mid-thinking cut, got name=%q id=%q input=%q", err.ToolName, err.ToolID, err.PartialInput)
@@ -170,7 +200,7 @@ func TestClassifyAccumulateError(t *testing.T) {
 			t.Fatal("expected Accumulate to fail on the truncated tool input, got nil")
 		}
 
-		err := classifyAccumulateError(msg, accErr)
+		err := classifyAccumulateError(msg, accErr, true)
 
 		var interrupted *OutputInterruptedError
 		if !errors.As(err, &interrupted) {
@@ -195,7 +225,7 @@ func TestClassifyAccumulateError(t *testing.T) {
 		}
 
 		sentinel := errors.New("unexpected event shape")
-		err := classifyAccumulateError(msg, sentinel)
+		err := classifyAccumulateError(msg, sentinel, true)
 
 		var interrupted *OutputInterruptedError
 		if errors.As(err, &interrupted) {
