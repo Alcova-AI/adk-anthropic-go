@@ -324,6 +324,7 @@ func (m *anthropicModel) streamOnce(
 			yield(nil, classifyAccumulateError(&message, err, includeThoughts))
 			return nil
 		}
+		mergeMessageDeltaUsage(&message, event)
 
 		// Handle different event types for streaming
 		switch ev := event.AsAny().(type) {
@@ -382,6 +383,34 @@ func (m *anthropicModel) streamOnce(
 	finalResp.TurnComplete = true
 	yield(finalResp, nil)
 	return nil
+}
+
+// mergeMessageDeltaUsage preserves cumulative usage fields that compatible
+// gateways can report on message_delta. The Anthropic SDK accumulator only
+// copies output_tokens from that event because Anthropic normally reports the
+// input fields on message_start. Gateways such as Vercel can report their final
+// input count on message_delta instead. Taking the maximum keeps Anthropic and
+// Vertex behaviour unchanged while accepting later cumulative totals.
+func mergeMessageDeltaUsage(message *anthropic.Message, event anthropic.MessageStreamEventUnion) {
+	if message == nil {
+		return
+	}
+	delta, ok := event.AsAny().(anthropic.MessageDeltaEvent)
+	if !ok {
+		return
+	}
+	if delta.Usage.JSON.InputTokens.Valid() {
+		message.Usage.InputTokens = max(message.Usage.InputTokens, delta.Usage.InputTokens)
+	}
+	if delta.Usage.JSON.CacheReadInputTokens.Valid() {
+		message.Usage.CacheReadInputTokens = max(message.Usage.CacheReadInputTokens, delta.Usage.CacheReadInputTokens)
+	}
+	if delta.Usage.JSON.CacheCreationInputTokens.Valid() {
+		message.Usage.CacheCreationInputTokens = max(message.Usage.CacheCreationInputTokens, delta.Usage.CacheCreationInputTokens)
+	}
+	if delta.Usage.JSON.OutputTokens.Valid() {
+		message.Usage.OutputTokens = max(message.Usage.OutputTokens, delta.Usage.OutputTokens)
+	}
 }
 
 // isOverloadedStreamError reports whether err is Anthropic's overloaded_error

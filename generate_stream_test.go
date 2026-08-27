@@ -51,6 +51,17 @@ const successSSE = messagePrefixSSE +
 	"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n" +
 	"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 
+const vercelUsageSSE = "event: message_start\n" +
+	"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"google/gemini-3.7-flash\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n" +
+	"event: content_block_start\n" +
+	"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+	"event: content_block_delta\n" +
+	"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n" +
+	"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+	"event: message_delta\n" +
+	"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"input_tokens\":7,\"cache_read_input_tokens\":3,\"cache_creation_input_tokens\":2,\"output_tokens\":5}}\n\n" +
+	"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+
 // Overload after content has already streamed — must NOT retry.
 const partialThenOverloadSSE = messagePrefixSSE +
 	"event: content_block_delta\n" +
@@ -199,6 +210,12 @@ func TestGenerateStream_RetriesOverloadThenSucceeds(t *testing.T) {
 			if !pairs[1].resp.TurnComplete {
 				t.Errorf("final response TurnComplete = false, want true")
 			}
+			if got := pairs[1].resp.UsageMetadata.PromptTokenCount; got != 3 {
+				t.Errorf("final input tokens = %d, want 3", got)
+			}
+			if got := pairs[1].resp.UsageMetadata.CandidatesTokenCount; got != 2 {
+				t.Errorf("final output tokens = %d, want 2", got)
+			}
 			if got := int(requests.Load()); got != tc.failCount+1 {
 				t.Errorf("requests = %d, want %d", got, tc.failCount+1)
 			}
@@ -212,6 +229,30 @@ func TestGenerateStream_RetriesOverloadThenSucceeds(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGenerateStream_UsesCumulativeGatewayUsageFromMessageDelta(t *testing.T) {
+	srv, _ := newSSEServer(t, vercelUsageSSE)
+	m, _ := newStreamTestModel(t, srv.URL)
+
+	pairs := collect(t.Context(), m)
+
+	if len(pairs) != 2 {
+		t.Fatalf("len(pairs) = %d, want 2 (partial + final)", len(pairs))
+	}
+	final := pairs[1]
+	if final.err != nil {
+		t.Fatalf("final error = %v", final.err)
+	}
+	if got := final.resp.UsageMetadata.PromptTokenCount; got != 12 {
+		t.Errorf("final input tokens = %d, want 12", got)
+	}
+	if got := final.resp.UsageMetadata.CachedContentTokenCount; got != 3 {
+		t.Errorf("final cached input tokens = %d, want 3", got)
+	}
+	if got := final.resp.UsageMetadata.CandidatesTokenCount; got != 5 {
+		t.Errorf("final output tokens = %d, want 5", got)
 	}
 }
 
