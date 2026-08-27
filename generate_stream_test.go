@@ -256,6 +256,33 @@ func TestGenerateStream_UsesCumulativeGatewayUsageFromMessageDelta(t *testing.T)
 	}
 }
 
+func TestGenerateStream_KeepsLargerUsageFromMessageStart(t *testing.T) {
+	stream := strings.Replace(
+		vercelUsageSSE,
+		`"usage":{"input_tokens":0,"output_tokens":0}`,
+		`"usage":{"input_tokens":9,"cache_read_input_tokens":4,"cache_creation_input_tokens":3,"output_tokens":0}`,
+		1,
+	)
+	srv, _ := newSSEServer(t, stream)
+	m, _ := newStreamTestModel(t, srv.URL)
+
+	pairs := collect(t.Context(), m)
+
+	if len(pairs) != 2 {
+		t.Fatalf("len(pairs) = %d, want 2 (partial + final)", len(pairs))
+	}
+	final := pairs[1]
+	if final.err != nil {
+		t.Fatalf("final error = %v", final.err)
+	}
+	if got := final.resp.UsageMetadata.PromptTokenCount; got != 16 {
+		t.Errorf("final input tokens = %d, want 16", got)
+	}
+	if got := final.resp.UsageMetadata.CachedContentTokenCount; got != 4 {
+		t.Errorf("final cached input tokens = %d, want 4", got)
+	}
+}
+
 func TestGenerateStream_ExhaustsRetriesOnPersistentOverload(t *testing.T) {
 	srv, requests := newSSEServer(t, overloadedSSE)
 	m, sleeps := newStreamTestModel(t, srv.URL)
