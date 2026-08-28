@@ -1527,14 +1527,15 @@ func TestThinkingConfigToAnthropicThinking(t *testing.T) {
 
 func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 	tests := []struct {
-		name         string
-		cfg          *genai.ThinkingConfig
-		model        anthropic.Model
-		wantNil      bool // expect zero-value thinking
-		wantAdaptive bool
-		wantBudget   int64
-		wantEffort   anthropic.OutputConfigEffort
-		wantDisplay  string
+		name           string
+		cfg            *genai.ThinkingConfig
+		model          anthropic.Model
+		wantNil        bool // expect zero-value thinking
+		wantAdaptive   bool
+		wantEffortOnly bool
+		wantBudget     int64
+		wantEffort     anthropic.OutputConfigEffort
+		wantDisplay    string
 	}{
 		// Model-aware level → adaptive + effort
 		{
@@ -1575,10 +1576,34 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 			wantEffort:   anthropic.OutputConfigEffortHigh,
 		},
 		{
-			name:       "unknown dated variant (no SDK constant yet) falls back to manual",
-			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
-			model:      anthropic.Model("claude-sonnet-4-6-20251201"), // hypothetical future date
-			wantBudget: 10000,
+			name:         "unknown dated adaptive Claude variant does not need an allowlist entry",
+			cfg:          &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:        anthropic.Model("claude-sonnet-4-6-20251201"), // hypothetical future date
+			wantAdaptive: true,
+			wantEffort:   anthropic.OutputConfigEffortHigh,
+		},
+		{
+			name:         "future adaptive Claude family does not need an allowlist entry",
+			cfg:          &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:        anthropic.Model("claude-opus-4-8"),
+			wantAdaptive: true,
+			wantEffort:   anthropic.OutputConfigEffortHigh,
+		},
+
+		// Anthropic-compatible gateways translate effort for non-Claude models.
+		{
+			name:           "HIGH on GLM gateway model uses effort without adaptive thinking",
+			cfg:            &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:          anthropic.Model("glm-5.3-flash"),
+			wantEffortOnly: true,
+			wantEffort:     anthropic.OutputConfigEffortHigh,
+		},
+		{
+			name:           "LOW on GLM gateway model uses effort without adaptive thinking",
+			cfg:            &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:          anthropic.Model("glm-5.3-flash"),
+			wantEffortOnly: true,
+			wantEffort:     anthropic.OutputConfigEffortLow,
 		},
 
 		// Non-adaptive models fall back to manual budget
@@ -1599,6 +1624,66 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 			name:       "LOW on Sonnet 4.5 (non-adaptive) → manual budget 1024",
 			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
 			model:      anthropic.ModelClaudeSonnet4_5,
+			wantBudget: 1024,
+		},
+		{
+			name:       "LOW on dated Haiku 4.5 → manual budget 1024",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:      anthropic.ModelClaudeHaiku4_5_20251001,
+			wantBudget: 1024,
+		},
+		{
+			name:       "LOW on Opus 4.5 → manual budget 1024",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:      anthropic.ModelClaudeOpus4_5,
+			wantBudget: 1024,
+		},
+		{
+			name:       "LOW on dated Opus 4.5 → manual budget 1024",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:      anthropic.ModelClaudeOpus4_5_20251101,
+			wantBudget: 1024,
+		},
+		{
+			name:       "LOW on dated Sonnet 4.5 → manual budget 1024",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:      anthropic.ModelClaudeSonnet4_5_20250929,
+			wantBudget: 1024,
+		},
+		{
+			name:       "LOW on Opus 4.1 → manual budget 1024",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:      anthropic.ModelClaudeOpus4_1,
+			wantBudget: 1024,
+		},
+		{
+			name:       "LOW on dated Opus 4.1 → manual budget 1024",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:      anthropic.ModelClaudeOpus4_1_20250805,
+			wantBudget: 1024,
+		},
+		{
+			name:       "LOW on Opus 4.0 → manual budget 1024",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:      anthropic.ModelClaudeOpus4_0,
+			wantBudget: 1024,
+		},
+		{
+			name:       "LOW on dated Opus 4 → manual budget 1024",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:      anthropic.ModelClaudeOpus4_20250514,
+			wantBudget: 1024,
+		},
+		{
+			name:       "LOW on Sonnet 4.0 → manual budget 1024",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:      anthropic.ModelClaudeSonnet4_0,
+			wantBudget: 1024,
+		},
+		{
+			name:       "LOW on dated Sonnet 4 → manual budget 1024",
+			cfg:        &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:      anthropic.ModelClaudeSonnet4_20250514,
 			wantBudget: 1024,
 		},
 
@@ -1683,6 +1768,12 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 			model:   anthropic.ModelClaudeHaiku4_5,
 			wantNil: true,
 		},
+		{
+			name:    "nil config on gateway model uses provider default",
+			cfg:     nil,
+			model:   anthropic.Model("glm-5.3-flash"),
+			wantNil: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1699,7 +1790,11 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 				return
 			}
 
-			if tt.wantAdaptive {
+			if tt.wantEffortOnly {
+				if got.Thinking.OfAdaptive != nil || got.Thinking.OfEnabled != nil {
+					t.Errorf("expected effort without Thinking, got %+v", got.Thinking)
+				}
+			} else if tt.wantAdaptive {
 				if got.Thinking.OfAdaptive == nil {
 					t.Fatal("expected OfAdaptive non-nil")
 				}

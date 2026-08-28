@@ -212,16 +212,16 @@ config := &genai.GenerateContentConfig{
 ```
 
 Mapping:
-| `genai` ThinkingConfig | Anthropic Behavior |
+| `genai` ThinkingConfig | Anthropic-compatible request behaviour |
 |---|---|
-| `ThinkingLevel: HIGH` | Adaptive thinking with high effort on supported models; otherwise manual thinking with a 10,000-token budget |
-| `ThinkingLevel: MEDIUM` | Adaptive thinking with medium effort on supported models; otherwise manual thinking with a 5,000-token budget |
-| `ThinkingLevel: LOW` | Adaptive thinking with low effort on supported models; otherwise manual thinking with the minimum 1,024-token budget |
+| `ThinkingLevel: HIGH` | High effort; adaptive Claude models also enable adaptive thinking, while manual-only Claude models use a 10,000-token budget |
+| `ThinkingLevel: MEDIUM` | Medium effort; adaptive Claude models also enable adaptive thinking, while manual-only Claude models use a 5,000-token budget |
+| `ThinkingLevel: LOW` | Low effort; adaptive Claude models also enable adaptive thinking, while manual-only Claude models use the minimum 1,024-token budget |
 | `ThinkingLevel: MINIMAL` | Thinking disabled |
 | `ThinkingBudget` set | Manual thinking with the exact budget, overriding `ThinkingLevel` |
 | `IncludeThoughts: true` | Return summarized thinking text when thinking is enabled; does not enable thinking |
 | `IncludeThoughts: false` or unset | Omit thinking text while preserving its signature for multi-turn continuity; does not disable thinking |
-| Nil or otherwise empty config | Adaptive thinking with the provider's default effort on supported models; thinking disabled on manual-only models |
+| Nil or otherwise empty config | Adaptive thinking with the provider's default effort on adaptive Claude models; provider default on all other models |
 
 Thinking blocks in responses are mapped to `genai.Part` with `Thought=true` and
 `ThoughtSignature` preserved for multi-turn conversations. When thoughts are

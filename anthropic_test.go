@@ -729,6 +729,48 @@ func TestConvertRequest_NilConfigLeavesThinkingOffOnNonAdaptive(t *testing.T) {
 	}
 }
 
+func TestConvertRequest_GatewayModelUsesEffortWithoutAdaptiveThinking(t *testing.T) {
+	tests := []struct {
+		name       string
+		level      genai.ThinkingLevel
+		wantEffort anthropic.OutputConfigEffort
+	}{
+		{name: "high", level: genai.ThinkingLevelHigh, wantEffort: anthropic.OutputConfigEffortHigh},
+		{name: "low", level: genai.ThinkingLevelLow, wantEffort: anthropic.OutputConfigEffortLow},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &anthropicModel{
+				canonicalModel:   "glm-5.3-flash",
+				requestModel:     "zai/glm-5.3-flash",
+				variant:          VariantAnthropicAPI,
+				defaultMaxTokens: testMaxTokens,
+			}
+			req := &model.LLMRequest{
+				Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
+				Config: &genai.GenerateContentConfig{
+					ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: tt.level},
+				},
+			}
+
+			params, err := m.convertRequest(req)
+			if err != nil {
+				t.Fatalf("convertRequest() error = %v", err)
+			}
+			if params.OutputConfig.Effort != tt.wantEffort {
+				t.Errorf("OutputConfig.Effort = %q, want %q", params.OutputConfig.Effort, tt.wantEffort)
+			}
+			if params.Thinking.OfAdaptive != nil || params.Thinking.OfEnabled != nil {
+				t.Errorf("expected no Anthropic Thinking config, got %+v", params.Thinking)
+			}
+			if params.Model != "zai/glm-5.3-flash" {
+				t.Errorf("Model = %q, want %q", params.Model, "zai/glm-5.3-flash")
+			}
+		})
+	}
+}
+
 // TestConvertRequest_ForcedToolUseDropsThinking locks in the workaround for
 // Anthropic's "forced tool use cannot be combined with extended thinking"
 // constraint. The combination is easy to land into via the genai shape:
@@ -762,9 +804,10 @@ func TestConvertRequest_ForcedToolUseDropsThinking(t *testing.T) {
 
 	cases := []struct {
 		name       string
-		modelName  string // adaptive-capable vs manual-only
+		modelName  string // adaptive Claude, manual-only Claude, or gateway model
 		toolConfig *genai.ToolConfig
 		thinking   *genai.ThinkingConfig
+		wantEffort anthropic.OutputConfigEffort
 	}{
 		{
 			name:      "adaptive_model_specific_tool",
@@ -819,6 +862,17 @@ func TestConvertRequest_ForcedToolUseDropsThinking(t *testing.T) {
 			},
 			thinking: &genai.ThinkingConfig{ThinkingBudget: ptrInt32(5000)},
 		},
+		{
+			name:      "gateway_model_keeps_effort",
+			modelName: "glm-5.3-flash",
+			toolConfig: &genai.ToolConfig{
+				FunctionCallingConfig: &genai.FunctionCallingConfig{
+					Mode: genai.FunctionCallingConfigModeAny,
+				},
+			},
+			thinking:   &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			wantEffort: anthropic.OutputConfigEffortHigh,
+		},
 	}
 
 	for _, tc := range cases {
@@ -848,8 +902,8 @@ func TestConvertRequest_ForcedToolUseDropsThinking(t *testing.T) {
 			if params.Thinking.OfAdaptive != nil || params.Thinking.OfEnabled != nil {
 				t.Errorf("expected Thinking to be cleared under forced tool_choice, got %+v", params.Thinking)
 			}
-			if params.OutputConfig.Effort != "" {
-				t.Errorf("expected OutputConfig.Effort to be cleared, got %q", params.OutputConfig.Effort)
+			if params.OutputConfig.Effort != tc.wantEffort {
+				t.Errorf("OutputConfig.Effort = %q, want %q", params.OutputConfig.Effort, tc.wantEffort)
 			}
 			if params.ToolChoice.OfAny == nil && params.ToolChoice.OfTool == nil {
 				t.Errorf("expected forced ToolChoice (OfAny or OfTool) to be preserved, got %+v", params.ToolChoice)

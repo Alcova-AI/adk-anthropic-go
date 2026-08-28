@@ -483,21 +483,20 @@ func hasToolUseBlock(blocks []anthropic.ContentBlockParamUnion) bool {
 }
 
 // ThinkingMapping bundles the Anthropic thinking parameter and the optional
-// effort level that maps from a genai.ThinkingConfig. Effort is non-empty
-// only when adaptive mode + a level hint produced one — manual extended
-// thinking and off both leave it empty.
+// effort level that maps from a genai.ThinkingConfig. Adaptive Claude models
+// use both fields; gateway models can use effort without a thinking field.
+// Manual extended thinking and off leave effort empty.
 type ThinkingMapping struct {
 	Thinking anthropic.ThinkingConfigParamUnion
 	Effort   anthropic.OutputConfigEffort
 }
 
 // ThinkingConfigToAnthropic maps a genai.ThinkingConfig to Anthropic's
-// Thinking parameter + optional OutputConfig.Effort hint. The model is
-// consulted so adaptive-capable models (Sonnet 4.6+, Opus 4.6+, Opus 4.7,
-// Mythos Preview) get adaptive mode + effort, while older models (Sonnet
-// 4.5, Haiku 4.5, etc.) fall back to manual extended thinking with a
-// token budget — preserving v0.1.9 behaviour for models that don't
-// support adaptive.
+// Thinking parameter + optional OutputConfig.Effort hint. Claude models that
+// support adaptive thinking get adaptive mode + effort. Older Claude models
+// that require manual extended thinking get a token budget. Non-Claude models
+// reached through an Anthropic-compatible gateway get effort without the
+// Claude-specific adaptive-thinking parameter.
 //
 // The Anthropic class ↔ Gemini class mapping is:
 //
@@ -510,14 +509,15 @@ type ThinkingMapping struct {
 // on either provider without provider-specific tuning by the caller.
 //
 // Mapping order (first matching rule wins):
-//  1. cfg == nil, adaptive-capable model                    → adaptive (default effort = high)
-//  2. cfg == nil, manual-only model                          → off
+//  1. cfg == nil, adaptive Claude model                      → adaptive (default effort = high)
+//  2. cfg == nil, other model                                → provider default
 //  3. ThinkingBudget set                                     → manual budget (explicit, bypasses level)
 //  4. ThinkingLevel == Minimal                               → off
-//  5. ThinkingLevel ∈ {Low, Medium, High}, adaptive          → adaptive + effort
-//  6. ThinkingLevel ∈ {Low, Medium, High}, manual-only       → manual budget mapped from level
-//  7. empty cfg (no fields set), adaptive-capable            → adaptive (default effort = high)
-//  8. empty cfg, manual-only                                 → off
+//  5. ThinkingLevel ∈ {Low, Medium, High}, adaptive Claude   → adaptive + effort
+//  6. ThinkingLevel ∈ {Low, Medium, High}, manual-only Claude → manual budget mapped from level
+//  7. ThinkingLevel ∈ {Low, Medium, High}, gateway model     → effort only
+//  8. empty cfg, adaptive Claude model                       → adaptive (default effort = high)
+//  9. empty cfg, other model                                 → provider default
 //
 // IncludeThoughts controls whether Anthropic returns summarized thinking text.
 // It maps to thinking.display without enabling or disabling thinking: true uses
@@ -526,6 +526,7 @@ type ThinkingMapping struct {
 // per-tier default.
 func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model) ThinkingMapping {
 	adaptive := supportsAdaptiveThinking(model)
+	effortOnly := supportsEffortWithoutAdaptiveThinking(model)
 
 	if cfg == nil {
 		if adaptive {
@@ -550,6 +551,9 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 				Thinking: adaptiveThinking(cfg.IncludeThoughts),
 				Effort:   levelToEffort(cfg.ThinkingLevel),
 			}
+		}
+		if effortOnly {
+			return ThinkingMapping{Effort: levelToEffort(cfg.ThinkingLevel)}
 		}
 		return ThinkingMapping{Thinking: enabledThinking(levelToBudget(cfg.ThinkingLevel), cfg.IncludeThoughts)}
 	}
@@ -578,8 +582,8 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 // behaviour should pass ThinkingLevel: Minimal explicitly.
 //
 // Deprecated: prefer ThinkingConfigToAnthropic, which is model-aware and
-// also returns the effort hint that pairs with adaptive thinking on
-// supported models.
+// also returns the effort hint used by adaptive Claude and compatible gateway
+// models.
 func ThinkingConfigToAnthropicThinking(cfg *genai.ThinkingConfig) anthropic.ThinkingConfigParamUnion {
 	return ThinkingConfigToAnthropic(cfg, "").Thinking
 }
@@ -610,17 +614,42 @@ func enabledThinking(budget int64, includeThoughts bool) anthropic.ThinkingConfi
 	}
 }
 
-// supportsAdaptiveThinking reports whether `model` accepts adaptive thinking
-// (thinking: {type: "adaptive"}). Matches against the SDK's canonical
-// unversioned aliases — when Anthropic ships a new adaptive-capable model
-// or a new dated variant, bump anthropic-sdk-go and add the constant here.
+// supportsAdaptiveThinking reports whether model accepts Claude's adaptive
+// thinking parameter. Claude 4.5 and older thinking-capable models require a
+// manual budget. New Claude models default to adaptive so new aliases and dated
+// variants do not require an allowlist update.
 func supportsAdaptiveThinking(model anthropic.Model) bool {
-	switch model {
-	case anthropic.ModelClaudeSonnet4_6,
-		anthropic.ModelClaudeOpus4_6,
-		anthropic.ModelClaudeOpus4_7,
-		anthropic.ModelClaudeMythosPreview:
-		return true
+	id := strings.ToLower(strings.TrimSpace(string(model)))
+	if !strings.HasPrefix(id, "claude-") || strings.HasPrefix(id, "claude-3-") {
+		return false
+	}
+	return !requiresManualThinkingBudget(id)
+}
+
+// supportsEffortWithoutAdaptiveThinking reports whether the canonical model is
+// a non-Claude model reached through an Anthropic-compatible gateway. Gateways
+// such as Vercel translate output_config.effort to the provider's native
+// reasoning setting, but thinking.type=adaptive remains Claude-specific.
+func supportsEffortWithoutAdaptiveThinking(model anthropic.Model) bool {
+	id := strings.ToLower(strings.TrimSpace(string(model)))
+	return id != "" && !strings.HasPrefix(id, "claude-")
+}
+
+func requiresManualThinkingBudget(modelID string) bool {
+	manualPrefixes := [...]string{
+		"claude-haiku-4-5",
+		"claude-opus-4-5",
+		"claude-sonnet-4-5",
+		"claude-opus-4-1",
+		"claude-opus-4-0",
+		"claude-opus-4-20250514",
+		"claude-sonnet-4-0",
+		"claude-sonnet-4-20250514",
+	}
+	for _, prefix := range manualPrefixes {
+		if strings.HasPrefix(modelID, prefix) {
+			return true
+		}
 	}
 	return false
 }

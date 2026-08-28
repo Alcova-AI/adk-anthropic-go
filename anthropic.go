@@ -550,10 +550,14 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 	// like the model just refused to call the tool. The forced tool_choice
 	// is the load-bearing semantic (the caller has pinned the response
 	// shape), so drop the thinking parameter on this side of the wire.
-	// Effort is meaningless without adaptive thinking, so clear it too.
+	// Effort is tied to adaptive thinking for Claude, so clear it with that
+	// mode. Gateway models can use effort without an Anthropic thinking field.
 	if converters.IsForcedToolUse(params.ToolChoice) {
+		adaptive := params.Thinking.OfAdaptive != nil
 		params.Thinking = anthropic.ThinkingConfigParamUnion{}
-		params.OutputConfig.Effort = ""
+		if adaptive {
+			params.OutputConfig.Effort = ""
+		}
 	}
 
 	if m.promptCaching != nil {
