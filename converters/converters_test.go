@@ -324,6 +324,42 @@ func TestThinkingBlock_RoundTripsThroughPersistedPart(t *testing.T) {
 	}
 }
 
+func TestContentBlockToGenaiPart_UsesAccumulatedToolInput(t *testing.T) {
+	var block anthropic.ContentBlockUnion
+	if err := block.UnmarshalJSON([]byte(`{
+		"type": "tool_use",
+		"id": "toolu_parallel",
+		"name": "conversation_set_title",
+		"input": {}
+	}`)); err != nil {
+		t.Fatalf("failed to unmarshal tool-use block: %v", err)
+	}
+
+	// The Anthropic stream accumulator updates the union's flattened Input as
+	// input_json_delta events arrive. For an earlier tool in a parallel response,
+	// AsAny can still expose the original empty input from the block-start event.
+	block.Input = json.RawMessage(`{"title":"Benefits lost and gained"}`)
+	staleVariant, ok := block.AsAny().(anthropic.ToolUseBlock)
+	if !ok {
+		t.Fatal("expected tool-use variant")
+	}
+	if string(staleVariant.Input) != `{}` {
+		t.Fatalf("test fixture no longer represents stale variant input: %s", staleVariant.Input)
+	}
+
+	part, err := converters.ContentBlockToGenaiPart(block)
+	if err != nil {
+		t.Fatalf("ContentBlockToGenaiPart() error = %v", err)
+	}
+	if part.FunctionCall == nil {
+		t.Fatal("expected function call")
+	}
+	want := map[string]any{"title": "Benefits lost and gained"}
+	if diff := cmp.Diff(want, part.FunctionCall.Args); diff != "" {
+		t.Errorf("function arguments mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestContentsToMessages_RejectsThinkingBoundaryAfterToolUse(t *testing.T) {
 	_, err := converters.ContentsToMessages([]*genai.Content{
 		{

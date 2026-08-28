@@ -187,18 +187,20 @@ func ContentBlockToGenaiPart(block anthropic.ContentBlockUnion) (*genai.Part, er
 		}, nil
 
 	case anthropic.ToolUseBlock:
-		// Convert to FunctionCall
+		// Read the accumulated input from the flattened union. During streaming,
+		// the SDK updates this field through input_json_delta events while the
+		// variant returned by AsAny can retain the empty block-start input for
+		// earlier tools in a parallel response.
 		args := make(map[string]any)
-		if variant.Input != nil {
-			// Input is json.RawMessage, unmarshal it
-			if err := json.Unmarshal(variant.Input, &args); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal tool input for %q (id=%s): %w", variant.Name, variant.ID, err)
+		if block.Input != nil {
+			if err := json.Unmarshal(block.Input, &args); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal tool input for %q (id=%s): %w", block.Name, block.ID, err)
 			}
 		}
 		return &genai.Part{
 			FunctionCall: &genai.FunctionCall{
-				ID:   variant.ID,
-				Name: variant.Name,
+				ID:   block.ID,
+				Name: block.Name,
 				Args: args,
 			},
 		}, nil
