@@ -1,5 +1,9 @@
 # Changelog
 
+## [v2.0.12] - Preserve thought-only continuation
+
+- Preserve an empty thought marker when hiding unsigned Gemini gateway reasoning would otherwise remove every response part. This lets ADK continue a thought-only turn without exposing reasoning text or replaying it to the provider.
+
 ## [v2.0.11] - Preserve gateway stream usage
 
 - Preserve cumulative input, cache-read, cache-creation, and output token counts when Anthropic-compatible gateways report them on the final `message_delta`. Standard Anthropic and Vertex streams retain their `message_start` counts, and lower later values cannot erase valid earlier usage.

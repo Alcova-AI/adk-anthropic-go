@@ -94,6 +94,17 @@ const thinkingSuccessSSE = "event: message_start\n" +
 	"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n" +
 	"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 
+const thoughtOnlySuccessSSE = "event: message_start\n" +
+	"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"google/gemini-3.7-flash\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n" +
+	"event: content_block_start\n" +
+	"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n" +
+	"event: content_block_delta\n" +
+	"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"weighing options\"}}\n\n" +
+	"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+	"event: message_delta\n" +
+	"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n" +
+	"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+
 // newSSEServer answers the i-th request with bodies[i] (repeating the last
 // body once exhausted) and counts requests.
 func newSSEServer(t *testing.T, bodies ...string) (*httptest.Server, *atomic.Int32) {
@@ -427,6 +438,27 @@ func TestGenerateStream_HonoursIncludeThoughts(t *testing.T) {
 				t.Fatalf("len(final.Content.Parts) = %d, want %d", len(final.Content.Parts), wantFinalParts)
 			}
 		})
+	}
+}
+
+func TestGenerateStream_PreservesHiddenThoughtOnlyTurn(t *testing.T) {
+	srv, _ := newSSEServer(t, thoughtOnlySuccessSSE)
+	m, _ := newStreamTestModel(t, srv.URL)
+
+	pairs := collect(t.Context(), m)
+
+	if len(pairs) != 1 {
+		t.Fatalf("len(pairs) = %d, want 1 final response", len(pairs))
+	}
+	if pairs[0].err != nil {
+		t.Fatalf("unexpected error: %v", pairs[0].err)
+	}
+	resp := pairs[0].resp
+	if resp == nil || !resp.TurnComplete || resp.Content == nil || len(resp.Content.Parts) != 1 {
+		t.Fatalf("response = %+v, want completed response with one content part", resp)
+	}
+	if part := resp.Content.Parts[0]; !part.Thought || part.Text != "" {
+		t.Errorf("part = %+v, want empty thought marker", part)
 	}
 }
 

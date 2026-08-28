@@ -227,9 +227,12 @@ func requestIncludesThoughts(req *model.LLMRequest) bool {
 
 // filterResponseThoughts enforces IncludeThoughts on providers that do not.
 // Vercel's Anthropic-compatible endpoint can return unsigned Gemini reasoning
-// blocks even when thinking.display is "omitted". Those blocks are display-only
+// blocks even when thinking.display is "omitted". Their text is display-only
 // and safe to discard. Signed thinking and redacted metadata are provider state
 // that must be replayed unchanged on later requests, so they are always kept.
+// If an unsigned thought is the complete response, retain an empty thought
+// marker so ADK continues the thought-only turn instead of treating an empty
+// response as the final answer.
 func filterResponseThoughts(resp *model.LLMResponse, includeThoughts bool) {
 	if includeThoughts || resp == nil || resp.Content == nil {
 		return
@@ -239,10 +242,16 @@ func filterResponseThoughts(resp *model.LLMResponse, includeThoughts bool) {
 
 func filterThoughtParts(parts []*genai.Part) []*genai.Part {
 	filtered := make([]*genai.Part, 0, len(parts))
+	removedUnsignedThought := false
 	for _, part := range parts {
 		if part == nil || !part.Thought || len(part.ThoughtSignature) > 0 || len(part.PartMetadata) > 0 {
 			filtered = append(filtered, part)
+			continue
 		}
+		removedUnsignedThought = true
+	}
+	if len(filtered) == 0 && removedUnsignedThought {
+		return []*genai.Part{{Thought: true}}
 	}
 	return filtered
 }
