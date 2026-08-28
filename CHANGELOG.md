@@ -1,5 +1,9 @@
 # Changelog
 
+## [v2.0.11] - Preserve gateway stream usage
+
+- Preserve cumulative input, cache-read, cache-creation, and output token counts when Anthropic-compatible gateways report them on the final `message_delta`. Standard Anthropic and Vertex streams retain their `message_start` counts, and lower later values cannot erase valid earlier usage.
+
 ## [v2.0.10] - Support Gemini gateway compatibility
 
 - Preserve multi-type JSON Schema definitions as Anthropic `anyOf` schemas so gateway-routed Gemini tool requests retain each allowed type.
