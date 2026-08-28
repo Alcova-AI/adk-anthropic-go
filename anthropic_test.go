@@ -264,6 +264,20 @@ func TestFilterThoughtParts_PreservesProviderState(t *testing.T) {
 	}
 }
 
+func TestFilterThoughtParts_PreservesThoughtOnlyTurn(t *testing.T) {
+	got := filterThoughtParts([]*genai.Part{{
+		Thought: true,
+		Text:    "Vercel Gemini reasoning",
+	}})
+
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d, want 1", len(got))
+	}
+	if !got[0].Thought || got[0].Text != "" {
+		t.Errorf("got[0] = %+v, want empty thought marker", got[0])
+	}
+}
+
 func TestGenerateContent_HonoursIncludeThoughts(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -311,6 +325,38 @@ func TestGenerateContent_HonoursIncludeThoughts(t *testing.T) {
 				t.Errorf("last part = %+v, want answer text", got.Content.Parts[len(got.Content.Parts)-1])
 			}
 		})
+	}
+}
+
+func TestGenerateContent_PreservesHiddenThoughtOnlyTurn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","model":"google/gemini-3.7-flash","content":[{"type":"thinking","thinking":"Vercel Gemini reasoning","signature":""}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":2}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
+		APIKey:  "gateway-key",
+		Variant: VariantAnthropicAPI,
+		BaseURL: srv.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	var got *model.LLMResponse
+	for resp, err := range llm.GenerateContent(t.Context(), &model.LLMRequest{}, false) {
+		if err != nil {
+			t.Fatalf("GenerateContent() error = %v", err)
+		}
+		got = resp
+	}
+
+	if got == nil || got.Content == nil || len(got.Content.Parts) != 1 {
+		t.Fatalf("GenerateContent() = %+v, want one content part", got)
+	}
+	if part := got.Content.Parts[0]; !part.Thought || part.Text != "" {
+		t.Errorf("part = %+v, want empty thought marker", part)
 	}
 }
 
