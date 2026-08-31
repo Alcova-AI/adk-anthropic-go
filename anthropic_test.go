@@ -96,6 +96,58 @@ func TestNewModel_DefaultMaxTokensSupportsNonStreaming(t *testing.T) {
 	}
 }
 
+func TestNewModel_GatewayEffortTranslationIsExplicit(t *testing.T) {
+	tests := []struct {
+		name       string
+		newModel   func() (model.LLM, error)
+		wantEffort anthropic.OutputConfigEffort
+	}{
+		{
+			name: "existing constructor leaves gateway translation disabled",
+			newModel: func() (model.LLM, error) {
+				return NewModel(t.Context(), "glm-5.3-flash", &Config{
+					APIKey:  "test-api-key",
+					Variant: VariantAnthropicAPI,
+				})
+			},
+		},
+		{
+			name: "option enables gateway translation",
+			newModel: func() (model.LLM, error) {
+				return NewModelWithOptions(t.Context(), "glm-5.3-flash", &Config{
+					APIKey:  "test-api-key",
+					Variant: VariantAnthropicAPI,
+				}, WithGatewayEffortTranslation())
+			},
+			wantEffort: anthropic.OutputConfigEffortHigh,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			llm, err := tt.newModel()
+			if err != nil {
+				t.Fatalf("creating model: %v", err)
+			}
+			params, err := llm.(*anthropicModel).convertRequest(&model.LLMRequest{
+				Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
+				Config: &genai.GenerateContentConfig{
+					ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+				},
+			})
+			if err != nil {
+				t.Fatalf("converting request: %v", err)
+			}
+			if params.Thinking.OfAdaptive != nil || params.Thinking.OfEnabled != nil {
+				t.Errorf("non-Claude model received Claude thinking: %+v", params.Thinking)
+			}
+			if params.OutputConfig.Effort != tt.wantEffort {
+				t.Errorf("effort = %q, want %q", params.OutputConfig.Effort, tt.wantEffort)
+			}
+		})
+	}
+}
+
 func TestNewModel_VertexAI_MissingConfig(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -742,10 +794,11 @@ func TestConvertRequest_GatewayModelUsesEffortWithoutAdaptiveThinking(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := &anthropicModel{
-				canonicalModel:   "glm-5.3-flash",
-				requestModel:     "zai/glm-5.3-flash",
-				variant:          VariantAnthropicAPI,
-				defaultMaxTokens: testMaxTokens,
+				canonicalModel:           "glm-5.3-flash",
+				requestModel:             "zai/glm-5.3-flash",
+				variant:                  VariantAnthropicAPI,
+				defaultMaxTokens:         testMaxTokens,
+				gatewayEffortTranslation: true,
 			}
 			req := &model.LLMRequest{
 				Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
@@ -803,11 +856,12 @@ func TestConvertRequest_ForcedToolUseDropsThinking(t *testing.T) {
 	}
 
 	cases := []struct {
-		name       string
-		modelName  string // adaptive Claude, manual-only Claude, or gateway model
-		toolConfig *genai.ToolConfig
-		thinking   *genai.ThinkingConfig
-		wantEffort anthropic.OutputConfigEffort
+		name                     string
+		modelName                string // adaptive Claude, manual-only Claude, or gateway model
+		toolConfig               *genai.ToolConfig
+		thinking                 *genai.ThinkingConfig
+		gatewayEffortTranslation bool
+		wantEffort               anthropic.OutputConfigEffort
 	}{
 		{
 			name:      "adaptive_model_specific_tool",
@@ -870,17 +924,19 @@ func TestConvertRequest_ForcedToolUseDropsThinking(t *testing.T) {
 					Mode: genai.FunctionCallingConfigModeAny,
 				},
 			},
-			thinking:   &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
-			wantEffort: anthropic.OutputConfigEffortHigh,
+			thinking:                 &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			gatewayEffortTranslation: true,
+			wantEffort:               anthropic.OutputConfigEffortHigh,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &anthropicModel{
-				canonicalModel:   tc.modelName,
-				variant:          VariantAnthropicAPI,
-				defaultMaxTokens: testMaxTokens,
+				canonicalModel:           tc.modelName,
+				variant:                  VariantAnthropicAPI,
+				defaultMaxTokens:         testMaxTokens,
+				gatewayEffortTranslation: tc.gatewayEffortTranslation,
 			}
 
 			req := &model.LLMRequest{

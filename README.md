@@ -214,14 +214,26 @@ config := &genai.GenerateContentConfig{
 Mapping:
 | `genai` ThinkingConfig | Anthropic-compatible request behaviour |
 |---|---|
-| `ThinkingLevel: HIGH` | High effort; adaptive Claude models also enable adaptive thinking, while manual-only Claude models use a 10,000-token budget |
-| `ThinkingLevel: MEDIUM` | Medium effort; adaptive Claude models also enable adaptive thinking, while manual-only Claude models use a 5,000-token budget |
-| `ThinkingLevel: LOW` | Low effort; adaptive Claude models also enable adaptive thinking, while manual-only Claude models use the minimum 1,024-token budget |
+| `ThinkingLevel: HIGH` | Adaptive Claude models use high effort; manual-only Claude models use a 10,000-token budget |
+| `ThinkingLevel: MEDIUM` | Adaptive Claude models use medium effort; manual-only Claude models use a 5,000-token budget |
+| `ThinkingLevel: LOW` | Adaptive Claude models use low effort; manual-only Claude models use the minimum 1,024-token budget |
 | `ThinkingLevel: MINIMAL` | Thinking disabled |
-| `ThinkingBudget` set | Manual thinking with the exact budget, overriding `ThinkingLevel` |
+| `ThinkingBudget` set | Claude uses manual thinking with the exact budget, overriding `ThinkingLevel`; non-Claude models use the provider default |
 | `IncludeThoughts: true` | Return summarized thinking text when thinking is enabled; does not enable thinking |
 | `IncludeThoughts: false` or unset | Omit thinking text while preserving its signature for multi-turn continuity; does not disable thinking |
 | Nil or otherwise empty config | Adaptive thinking with the provider's default effort on adaptive Claude models; provider default on all other models |
+
+For a verified Anthropic-compatible gateway that translates Anthropic effort
+levels for non-Claude models, use `NewModelWithOptions` and opt in explicitly:
+
+```go
+model, err := adkanthropic.NewModelWithOptions(
+	ctx,
+	"glm-5.3-flash",
+	config,
+	adkanthropic.WithGatewayEffortTranslation(),
+)
+```
 
 Thinking blocks in responses are mapped to `genai.Part` with `Thought=true` and
 `ThoughtSignature` preserved for multi-turn conversations. When thoughts are

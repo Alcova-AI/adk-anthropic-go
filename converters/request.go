@@ -484,8 +484,7 @@ func hasToolUseBlock(blocks []anthropic.ContentBlockParamUnion) bool {
 
 // ThinkingMapping bundles the Anthropic thinking parameter and the optional
 // effort level that maps from a genai.ThinkingConfig. Adaptive Claude models
-// use both fields; gateway models can use effort without a thinking field.
-// Manual extended thinking and off leave effort empty.
+// use both fields. Manual extended thinking and off leave effort empty.
 type ThinkingMapping struct {
 	Thinking anthropic.ThinkingConfigParamUnion
 	Effort   anthropic.OutputConfigEffort
@@ -495,8 +494,8 @@ type ThinkingMapping struct {
 // Thinking parameter + optional OutputConfig.Effort hint. Claude models that
 // support adaptive thinking get adaptive mode + effort. Older Claude models
 // that require manual extended thinking get a token budget. Non-Claude models
-// reached through an Anthropic-compatible gateway get effort without the
-// Claude-specific adaptive-thinking parameter.
+// receive neither field unless the caller explicitly uses
+// ThinkingConfigToAnthropicWithGatewayEffortTranslation.
 //
 // The Anthropic class ↔ Gemini class mapping is:
 //
@@ -509,15 +508,16 @@ type ThinkingMapping struct {
 // on either provider without provider-specific tuning by the caller.
 //
 // Mapping order (first matching rule wins):
-//  1. cfg == nil, adaptive Claude model                      → adaptive (default effort = high)
+//  1. cfg == nil, adaptive Claude model                      → adaptive; provider effort default applies (currently high)
 //  2. cfg == nil, other model                                → provider default
-//  3. ThinkingBudget set                                     → manual budget (explicit, bypasses level)
-//  4. ThinkingLevel == Minimal                               → off
-//  5. ThinkingLevel ∈ {Low, Medium, High}, adaptive Claude   → adaptive + effort
-//  6. ThinkingLevel ∈ {Low, Medium, High}, manual-only Claude → manual budget mapped from level
-//  7. ThinkingLevel ∈ {Low, Medium, High}, gateway model     → effort only
-//  8. empty cfg, adaptive Claude model                       → adaptive (default effort = high)
-//  9. empty cfg, other model                                 → provider default
+//  3. ThinkingBudget set, Claude or legacy empty model       → manual budget (explicit, bypasses level)
+//  4. ThinkingBudget set, other model                        → provider default
+//  5. ThinkingLevel == Minimal                               → off
+//  6. ThinkingLevel ∈ {Low, Medium, High}, adaptive Claude   → adaptive + effort
+//  7. ThinkingLevel ∈ {Low, Medium, High}, manual-only Claude → manual budget mapped from level
+//  8. ThinkingLevel ∈ {Low, Medium, High}, other model       → provider default
+//  9. empty cfg, adaptive Claude model                       → adaptive; provider effort default applies (currently high)
+//  10. empty cfg, other model                                → provider default
 //
 // IncludeThoughts controls whether Anthropic returns summarized thinking text.
 // It maps to thinking.display without enabling or disabling thinking: true uses
@@ -525,8 +525,22 @@ type ThinkingMapping struct {
 // itself remains driven solely by ThinkingBudget / ThinkingLevel and the
 // per-tier default.
 func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model) ThinkingMapping {
+	return thinkingConfigToAnthropic(cfg, model, false)
+}
+
+// ThinkingConfigToAnthropicWithGatewayEffortTranslation maps non-Claude
+// ThinkingLevel values to output_config.effort without adding Claude's
+// thinking parameter. Callers must use this only for gateways that explicitly
+// support that translation.
+func ThinkingConfigToAnthropicWithGatewayEffortTranslation(cfg *genai.ThinkingConfig, model anthropic.Model) ThinkingMapping {
+	return thinkingConfigToAnthropic(cfg, model, true)
+}
+
+func thinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model, gatewayEffortTranslation bool) ThinkingMapping {
 	adaptive := supportsAdaptiveThinking(model)
-	effortOnly := supportsEffortWithoutAdaptiveThinking(model)
+	modelID := strings.ToLower(strings.TrimSpace(string(model)))
+	claude := strings.HasPrefix(modelID, "claude-")
+	manual := modelID == "" || (claude && !adaptive)
 
 	if cfg == nil {
 		if adaptive {
@@ -535,6 +549,9 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 		return ThinkingMapping{}
 	}
 	if cfg.ThinkingBudget != nil {
+		if !claude && modelID != "" {
+			return ThinkingMapping{}
+		}
 		return ThinkingMapping{Thinking: enabledThinking(int64(*cfg.ThinkingBudget), cfg.IncludeThoughts)}
 	}
 
@@ -552,10 +569,13 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 				Effort:   levelToEffort(cfg.ThinkingLevel),
 			}
 		}
-		if effortOnly {
+		if gatewayEffortTranslation && !claude && modelID != "" {
 			return ThinkingMapping{Effort: levelToEffort(cfg.ThinkingLevel)}
 		}
-		return ThinkingMapping{Thinking: enabledThinking(levelToBudget(cfg.ThinkingLevel), cfg.IncludeThoughts)}
+		if manual {
+			return ThinkingMapping{Thinking: enabledThinking(levelToBudget(cfg.ThinkingLevel), cfg.IncludeThoughts)}
+		}
+		return ThinkingMapping{}
 	}
 
 	// Empty cfg (no fields set, or only IncludeThoughts) — same as nil: pick
@@ -582,8 +602,7 @@ func ThinkingConfigToAnthropic(cfg *genai.ThinkingConfig, model anthropic.Model)
 // behaviour should pass ThinkingLevel: Minimal explicitly.
 //
 // Deprecated: prefer ThinkingConfigToAnthropic, which is model-aware and
-// also returns the effort hint used by adaptive Claude and compatible gateway
-// models.
+// also returns the effort hint used by adaptive Claude models.
 func ThinkingConfigToAnthropicThinking(cfg *genai.ThinkingConfig) anthropic.ThinkingConfigParamUnion {
 	return ThinkingConfigToAnthropic(cfg, "").Thinking
 }
@@ -624,15 +643,6 @@ func supportsAdaptiveThinking(model anthropic.Model) bool {
 		return false
 	}
 	return !requiresManualThinkingBudget(id)
-}
-
-// supportsEffortWithoutAdaptiveThinking reports whether the canonical model is
-// a non-Claude model reached through an Anthropic-compatible gateway. Gateways
-// such as Vercel translate output_config.effort to the provider's native
-// reasoning setting, but thinking.type=adaptive remains Claude-specific.
-func supportsEffortWithoutAdaptiveThinking(model anthropic.Model) bool {
-	id := strings.ToLower(strings.TrimSpace(string(model)))
-	return id != "" && !strings.HasPrefix(id, "claude-")
 }
 
 func requiresManualThinkingBudget(modelID string) bool {

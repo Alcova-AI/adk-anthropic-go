@@ -1563,15 +1563,16 @@ func TestThinkingConfigToAnthropicThinking(t *testing.T) {
 
 func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 	tests := []struct {
-		name           string
-		cfg            *genai.ThinkingConfig
-		model          anthropic.Model
-		wantNil        bool // expect zero-value thinking
-		wantAdaptive   bool
-		wantEffortOnly bool
-		wantBudget     int64
-		wantEffort     anthropic.OutputConfigEffort
-		wantDisplay    string
+		name                     string
+		cfg                      *genai.ThinkingConfig
+		model                    anthropic.Model
+		gatewayEffortTranslation bool
+		wantNil                  bool // expect zero-value thinking
+		wantAdaptive             bool
+		wantEffortOnly           bool
+		wantBudget               int64
+		wantEffort               anthropic.OutputConfigEffort
+		wantDisplay              string
 	}{
 		// Model-aware level → adaptive + effort
 		{
@@ -1628,18 +1629,33 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 
 		// Anthropic-compatible gateways translate effort for non-Claude models.
 		{
-			name:           "HIGH on GLM gateway model uses effort without adaptive thinking",
-			cfg:            &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
-			model:          anthropic.Model("glm-5.3-flash"),
-			wantEffortOnly: true,
-			wantEffort:     anthropic.OutputConfigEffortHigh,
+			name:                     "HIGH on GLM gateway model uses effort without adaptive thinking",
+			cfg:                      &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:                    anthropic.Model("glm-5.3-flash"),
+			gatewayEffortTranslation: true,
+			wantEffortOnly:           true,
+			wantEffort:               anthropic.OutputConfigEffortHigh,
 		},
 		{
-			name:           "LOW on GLM gateway model uses effort without adaptive thinking",
-			cfg:            &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
-			model:          anthropic.Model("glm-5.3-flash"),
-			wantEffortOnly: true,
-			wantEffort:     anthropic.OutputConfigEffortLow,
+			name:                     "LOW on GLM gateway model uses effort without adaptive thinking",
+			cfg:                      &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+			model:                    anthropic.Model("glm-5.3-flash"),
+			gatewayEffortTranslation: true,
+			wantEffortOnly:           true,
+			wantEffort:               anthropic.OutputConfigEffortLow,
+		},
+		{
+			name:    "HIGH on non-Claude model without gateway capability uses provider default",
+			cfg:     &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+			model:   anthropic.Model("glm-5.3-flash"),
+			wantNil: true,
+		},
+		{
+			name:                     "ThinkingBudget on non-Claude gateway model uses provider default",
+			cfg:                      &genai.ThinkingConfig{ThinkingBudget: int32Ptr(2048)},
+			model:                    anthropic.Model("glm-5.3-flash"),
+			gatewayEffortTranslation: true,
+			wantNil:                  true,
 		},
 
 		// Non-adaptive models fall back to manual budget
@@ -1747,7 +1763,7 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 
 		// Explicit overrides remain authoritative
 		{
-			name:        "ThinkingBudget overrides level on any model",
+			name:        "ThinkingBudget overrides level on Claude",
 			cfg:         &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh, ThinkingBudget: int32Ptr(2048)},
 			model:       anthropic.ModelClaudeSonnet4_6,
 			wantBudget:  2048,
@@ -1815,6 +1831,9 @@ func TestThinkingConfigToAnthropic_ModelAware(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := converters.ThinkingConfigToAnthropic(tt.cfg, tt.model)
+			if tt.gatewayEffortTranslation {
+				got = converters.ThinkingConfigToAnthropicWithGatewayEffortTranslation(tt.cfg, tt.model)
+			}
 
 			if tt.wantNil {
 				if got.Thinking.OfEnabled != nil || got.Thinking.OfAdaptive != nil {

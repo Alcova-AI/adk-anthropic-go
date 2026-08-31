@@ -43,6 +43,24 @@ type PromptCachingConfig struct {
 	ConversationHistory *CacheBreakpoint
 }
 
+// ModelOption configures optional model behaviour without expanding Config's
+// public struct shape.
+type ModelOption func(*modelOptions)
+
+type modelOptions struct {
+	gatewayEffortTranslation bool
+}
+
+// WithGatewayEffortTranslation enables output_config.effort for non-Claude
+// models when an Anthropic-compatible gateway translates Anthropic effort
+// levels into the upstream model's native reasoning setting. It does not
+// change Claude thinking behaviour.
+func WithGatewayEffortTranslation() ModelOption {
+	return func(opts *modelOptions) {
+		opts.gatewayEffortTranslation = true
+	}
+}
+
 // Config holds configuration for creating an Anthropic model.
 type Config struct {
 	// APIKey authenticates requests to the direct or Anthropic-compatible API.

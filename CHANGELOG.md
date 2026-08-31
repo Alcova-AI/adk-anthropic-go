@@ -2,7 +2,7 @@
 
 ## [v2.0.13] - Preserve gateway reasoning effort
 
-- Map `ThinkingLevel: LOW`, `MEDIUM`, and `HIGH` to `output_config.effort` for non-Claude models reached through an Anthropic-compatible gateway, without sending Claude's `thinking.type: adaptive` parameter.
+- Add `NewModelWithOptions` and `WithGatewayEffortTranslation` so verified Anthropic-compatible gateways can explicitly map `ThinkingLevel: LOW`, `MEDIUM`, and `HIGH` to `output_config.effort` for non-Claude models without sending Claude's `thinking.type: adaptive` parameter. The existing `NewModel` API remains available and does not assume gateway-specific translation.
 - Keep fixed thinking-token budgets only for Claude models that require legacy manual thinking, including Claude Haiku 4.5. Claude Sonnet 4.6 and newer Claude models use adaptive thinking with explicit effort without requiring a growing model allowlist.
 - Preserve gateway effort when forced tool choice requires the adapter to remove Anthropic thinking configuration.
 - Preserve accumulated arguments for every tool in a parallel streaming response instead of returning empty arguments for earlier tool calls whose typed SDK view remains stale.
