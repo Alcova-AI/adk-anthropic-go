@@ -54,6 +54,9 @@ type anthropicModel struct {
 	variant          string
 	defaultMaxTokens int
 	promptCaching    *PromptCachingConfig
+	// gatewayEffortTranslation permits effort-only requests for non-Claude
+	// models on a gateway that explicitly supports that translation.
+	gatewayEffortTranslation bool
 
 	// retrySleep waits between mid-stream overload retries. Overridable so
 	// tests can drop the delay; production always gets sleepWithContext.
@@ -75,8 +78,19 @@ type anthropicModel struct {
 // when the API expects a different model identifier from the canonical name.
 // Name and capability checks continue to use the canonical model name.
 func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (model.LLM, error) {
+	return NewModelWithOptions(ctx, modelName, cfg)
+}
+
+// NewModelWithOptions returns [model.LLM] with optional, explicitly declared
+// capabilities for Anthropic-compatible endpoints. NewModel remains available
+// as the default constructor with no additional gateway capabilities.
+func NewModelWithOptions(ctx context.Context, modelName anthropic.Model, cfg *Config, options ...ModelOption) (model.LLM, error) {
 	if cfg == nil {
 		cfg = &Config{}
+	}
+	modelOpts := &modelOptions{}
+	for _, option := range options {
+		option(modelOpts)
 	}
 
 	variant := cfg.Variant
@@ -126,13 +140,14 @@ func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (mode
 	}
 
 	return &anthropicModel{
-		client:           client,
-		canonicalModel:   modelName,
-		requestModel:     requestModel,
-		variant:          variant,
-		defaultMaxTokens: maxTokens,
-		promptCaching:    cfg.PromptCaching,
-		retrySleep:       sleepWithContext,
+		client:                   client,
+		canonicalModel:           modelName,
+		requestModel:             requestModel,
+		variant:                  variant,
+		defaultMaxTokens:         maxTokens,
+		promptCaching:            cfg.PromptCaching,
+		gatewayEffortTranslation: modelOpts.gatewayEffortTranslation,
+		retrySleep:               sleepWithContext,
 	}, nil
 }
 
@@ -538,6 +553,9 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 		thinkingCfg = req.Config.ThinkingConfig
 	}
 	mapping := converters.ThinkingConfigToAnthropic(thinkingCfg, m.canonicalModel)
+	if m.gatewayEffortTranslation {
+		mapping = converters.ThinkingConfigToAnthropicWithGatewayEffortTranslation(thinkingCfg, m.canonicalModel)
+	}
 	params.Thinking = mapping.Thinking
 	if mapping.Effort != "" {
 		params.OutputConfig.Effort = mapping.Effort
@@ -550,10 +568,14 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 	// like the model just refused to call the tool. The forced tool_choice
 	// is the load-bearing semantic (the caller has pinned the response
 	// shape), so drop the thinking parameter on this side of the wire.
-	// Effort is meaningless without adaptive thinking, so clear it too.
+	// Effort is tied to adaptive thinking for Claude, so clear it with that
+	// mode. Gateway models can use effort without an Anthropic thinking field.
 	if converters.IsForcedToolUse(params.ToolChoice) {
+		adaptive := params.Thinking.OfAdaptive != nil
 		params.Thinking = anthropic.ThinkingConfigParamUnion{}
-		params.OutputConfig.Effort = ""
+		if adaptive {
+			params.OutputConfig.Effort = ""
+		}
 	}
 
 	if m.promptCaching != nil {
