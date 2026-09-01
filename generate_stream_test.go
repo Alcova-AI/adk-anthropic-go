@@ -30,6 +30,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
+
+	"github.com/Alcova-AI/adk-anthropic-go/v3/vercel"
 )
 
 // Exact shape Vertex delivers when overload arrives after the 200 OK —
@@ -49,6 +51,14 @@ const successSSE = messagePrefixSSE +
 	"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
 	"event: message_delta\n" +
 	"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n" +
+	"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+
+const vercelMetadataSSE = "event: message_start\n" +
+	"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"zai/glm-5.3-flash\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":0},\"providerMetadata\":{\"gateway\":{\"cost\":0.01,\"generationId\":\"gen_stream\",\"routing\":{\"resolvedProvider\":\"zai\",\"originalModelId\":\"zai/glm-5.3-flash\",\"canonicalSlug\":\"zai/glm-5.3-flash\",\"modelAttemptCount\":1,\"totalProviderAttemptCount\":1}}}}}\n\n" +
+	"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+	"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n" +
+	"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+	"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n" +
 	"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 
 const vercelUsageSSE = "event: message_start\n" +
@@ -128,10 +138,10 @@ func newSSEServer(t *testing.T, bodies ...string) (*httptest.Server, *atomic.Int
 // in production) and stubs retrySleep to record delays without sleeping.
 func newStreamTestModel(t *testing.T, baseURL string) (*anthropicModel, *[]time.Duration) {
 	t.Helper()
-	llm, err := NewModel(t.Context(), "claude-haiku-4-5", &Config{
-		APIKey:  "test-key",
-		Variant: VariantAnthropicAPI,
-		BaseURL: baseURL,
+	client := anthropic.NewClient(option.WithAPIKey("test-key"), option.WithBaseURL(baseURL))
+	llm, err := NewModel(Config{
+		Client:         client,
+		CanonicalModel: "claude-haiku-4-5",
 	})
 	if err != nil {
 		t.Fatalf("NewModel: %v", err)
@@ -240,6 +250,24 @@ func TestGenerateStream_RetriesOverloadThenSucceeds(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGenerateStream_PreservesVercelMetadata(t *testing.T) {
+	srv, _ := newSSEServer(t, vercelMetadataSSE)
+	m, _ := newStreamTestModel(t, srv.URL)
+	m.vercel = &vercel.Config{}
+
+	pairs := collect(t.Context(), m)
+	if len(pairs) != 2 || pairs[1].err != nil {
+		t.Fatalf("pairs = %+v", pairs)
+	}
+	metadata, ok := vercel.MetadataFromResponse(pairs[1].resp)
+	if !ok {
+		t.Fatal("missing Vercel metadata on final stream response")
+	}
+	if metadata.GenerationID != "gen_stream" || metadata.ResolvedProvider != "zai" {
+		t.Fatalf("metadata = %+v", metadata)
 	}
 }
 

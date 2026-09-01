@@ -1,243 +1,149 @@
 # ADK Anthropic Go
 
-Anthropic Claude model support for Google's [Agent Development Kit (ADK)](https://github.com/google/adk-go).
-
-This package implements the `model.LLM` interface for Anthropic Claude models, allowing you to use Claude with ADK agents.
+Anthropic Messages API support for Google's [Agent Development Kit](https://github.com/google/adk-go).
 
 ## Installation
 
 ```bash
-go get github.com/Alcova-AI/adk-anthropic-go/v2
+go get github.com/Alcova-AI/adk-anthropic-go/v3
 ```
-
-## Versioning
-
-This package tracks two lines, matching Google's `adk-go` major versions:
-
-| Branch | Install | adk-go dependency |
-|---|---|---|
-| `main` (v2.x) | `go get github.com/Alcova-AI/adk-anthropic-go/v2` | `google.golang.org/adk/v2` |
-| `v1` (v1.x) | `go get github.com/Alcova-AI/adk-anthropic-go` | `google.golang.org/adk` (v1.x) |
-
-Both lines are maintained. If you're upgrading your own `adk-go` dependency to v2, see [adk-go's migration guide](https://github.com/google/adk-go/blob/main/README-v2.md) for changes that affect your application code directly (e.g. `session.NewEvent` now takes a `context.Context`, and `ToolContext`/`CallbackContext` are unified into `agent.Context`) — this package's `model.LLM` implementation is unaffected by those changes.
 
 ## Features
 
 - Streaming and non-streaming responses
-- Tool/function calling with `ToolConfig` support (tool_choice: auto, any, specific tool)
-- Structured output via `ResponseSchema` (guaranteed schema-compliant JSON)
-- Extended thinking with `ThinkingConfig` support (level, budget, and response mapping to `genai.Part` with `Thought=true`)
-- Multimodal inputs (text, images)
-- PDF document processing (beta)
-- System instructions
-- Both direct Anthropic API and Vertex AI backends
-- Automatic retry of mid-stream overload errors (streaming only, before any content has been yielded)
+- Tool calling and structured output
+- Text, image, and PDF input
+- Signed thinking continuity
+- Explicit adaptive-effort, token-budget, and disabled reasoning strategies
+- Manual, gateway-automatic, and provider-default prompt caching
+- Caller-owned Anthropic SDK clients for direct, Vertex AI, and compatible endpoints
+- Typed Vercel routing, fail-closed ZDR policy, provider options, cost, and routing metadata
 
-## Supported Models
+## Direct Anthropic API
 
-- `claude-sonnet-4-5` / `claude-sonnet-4-5-20250929` (Claude Sonnet 4.5)
-- `claude-opus-4-5` / `claude-opus-4-5-20251101` (Claude Opus 4.5)
-- `claude-sonnet-4-0` / `claude-sonnet-4-20250514` (Claude Sonnet 4)
-- `claude-opus-4-0` / `claude-opus-4-20250514` (Claude Opus 4)
-- `claude-opus-4-1-20250805` (Claude Opus 4.1)
-- `claude-haiku-4-5` / `claude-haiku-4-5-20251001` (Claude Haiku 4.5)
-- `claude-3-5-haiku-latest` / `claude-3-5-haiku-20241022` (Claude 3.5 Haiku)
-
-## Usage
-
-### Direct Anthropic API
+The caller constructs and owns the SDK client. Authentication and endpoint selection therefore stay outside the adapter.
 
 ```go
-package main
+client := anthropic.NewClient(option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
 
-import (
-	"context"
-	"log"
-	"os"
+model, err := adkanthropic.NewModel(
+	adkanthropic.Config{
+		Client:         client,
+		CanonicalModel: anthropic.ModelClaudeSonnet4_6,
+	},
+	adkanthropic.WithDefaultMaxTokens(16_384),
+	adkanthropic.WithReasoning(adkanthropic.ReasoningConfig{
+		Strategy:     adkanthropic.ReasoningAdaptiveEffort,
+		DefaultLevel: genai.ThinkingLevelMedium,
+	}),
+)
+```
 
-	"github.com/anthropics/anthropic-sdk-go"
-	adkanthropic "github.com/Alcova-AI/adk-anthropic-go/v2"
-	"google.golang.org/adk/v2/agent/llmagent"
+## Anthropic on Vertex AI
+
+```go
+client := anthropic.NewClient(
+	vertex.WithGoogleAuth(ctx, location, projectID),
 )
 
-func main() {
-	ctx := context.Background()
-
-	model, err := adkanthropic.NewModel(ctx, anthropic.ModelClaudeSonnet4_20250514, &adkanthropic.Config{
-		APIKey: os.Getenv("ANTHROPIC_API_KEY"),
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	agent, err := llmagent.New(llmagent.Config{
-		Name:        "my_agent",
-		Model:       model,
-		Description: "A helpful assistant powered by Claude",
-		Instruction: "You are a helpful assistant.",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Use the agent...
-	_ = agent
-}
-```
-
-### Vertex AI
-
-```go
-model, err := adkanthropic.NewModel(ctx, "claude-sonnet-4@20250514", &adkanthropic.Config{
-	Variant:         adkanthropic.VariantVertexAI,
-	VertexProjectID: os.Getenv("GOOGLE_CLOUD_PROJECT"),
-	VertexLocation:  os.Getenv("GOOGLE_CLOUD_LOCATION"),
+model, err := adkanthropic.NewModel(adkanthropic.Config{
+	Client:         client,
+	CanonicalModel: anthropic.ModelClaudeSonnet4_6,
+	RequestModel:   "claude-sonnet-4-6@20260217",
 })
 ```
 
-Or set `ANTHROPIC_USE_VERTEX=1` to use Vertex AI without specifying the variant in code.
-
-### Anthropic-Compatible APIs
-
-Use `BaseURL` to select a compatible endpoint. Set `RequestModel` when that
-endpoint expects a different model identifier from the canonical Anthropic name:
+## Vercel AI Gateway
 
 ```go
-model, err := adkanthropic.NewModel(ctx, anthropic.ModelClaudeSonnet4_6, &adkanthropic.Config{
-	APIKey:       os.Getenv("GATEWAY_API_KEY"),
-	BaseURL:      "https://gateway.example.com",
-	RequestModel: "provider/claude-sonnet-4.6",
-})
+client := anthropic.NewClient(
+	option.WithAPIKey(os.Getenv("AI_GATEWAY_API_KEY")),
+	option.WithBaseURL("https://ai-gateway.vercel.sh"),
+)
+
+model, err := adkanthropic.NewModel(
+	adkanthropic.Config{
+		Client:         client,
+		CanonicalModel: "glm-5.3-flash",
+		RequestModel:   "zai/glm-5.3-flash",
+	},
+	adkanthropic.WithReasoning(adkanthropic.ReasoningConfig{
+		Strategy:     adkanthropic.ReasoningTokenBudget,
+		DefaultLevel: genai.ThinkingLevelMedium,
+	}),
+	adkanthropic.WithVercelGateway(vercel.Config{
+		Routing: vercel.Routing{
+			Only: []string{"zai", "baseten"},
+			Sort: vercel.SortTTFT,
+		},
+		// ZDRRequired is the zero-value default.
+		DataPolicy: vercel.ZDRRequired,
+	}),
+)
 ```
 
-`model.Name()` and capability checks continue to use the canonical model name.
+Set `DataPolicy: vercel.RetentionAllowed` only for requests that may use providers without zero-data-retention support. This sends `zeroDataRetention: false` explicitly.
 
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_API_KEY` | API key for direct Anthropic API access |
-| `ANTHROPIC_USE_VERTEX` | Set to `1` or `true` to use Vertex AI backend |
-| `GOOGLE_CLOUD_PROJECT` | GCP project ID for Vertex AI |
-| `GOOGLE_CLOUD_LOCATION` | GCP location for Vertex AI (e.g., `us-central1`) |
-
-### Configuration Options
+Vercel routing metadata is available on the final ADK response:
 
 ```go
-type Config struct {
-	// APIKey for direct Anthropic API access
-	APIKey string
-
-	// Vertex AI configuration
-	VertexProjectID string
-	VertexLocation  string
-
-	// Backend variant: VariantAnthropicAPI or VariantVertexAI
-	Variant string
-
-	// Optional endpoint for proxies and Anthropic-compatible APIs.
-	// Ignored for Vertex AI.
-	BaseURL string
-
-	// Optional model identifier sent to the API
-	RequestModel anthropic.Model
-
-	// Default max tokens (default: 16384)
-	DefaultMaxTokens int
+metadata, ok := vercel.MetadataFromResponse(response)
+if ok {
+	fmt.Println(metadata.ResolvedProvider, metadata.CostUSD)
 }
 ```
 
-### Structured Output
+## Reasoning
 
-Set `ResponseSchema` on the request config to get guaranteed schema-compliant JSON responses. On the direct Anthropic API, this uses the Beta API with native structured outputs. On Vertex AI, it falls back to prompt-based JSON generation with automatic markdown fence stripping.
+The route selects one strategy. The adapter does not infer a strategy from the model name.
+
+| Strategy | Wire behaviour |
+|---|---|
+| `ReasoningDisabled` | Omits thinking and effort |
+| `ReasoningAdaptiveEffort` | Uses `thinking.type: adaptive` and maps low, medium, and high to `output_config.effort` |
+| `ReasoningTokenBudget` | Uses `thinking.type: enabled` and maps low, medium, and high to token budgets |
+
+The default token-budget mapping is 1,024 for low, 5,000 for medium, and 10,000 for high. Supply `ReasoningBudgets` to change it. `ThinkingLevel: MINIMAL` disables thinking for that request.
+
+The v3 adapter accepts level-based reasoning only. A request with `ThinkingBudget` returns an error because the route strategy is the single source of wire behaviour.
+
+## Prompt caching
+
+Use `WithPromptCaching` to select one cache policy:
+
+- `PromptCacheProviderDefault` sends no explicit cache controls.
+- `PromptCacheGatewayAutomatic` lets the gateway manage breakpoints.
+- `PromptCacheManual` applies the configured Anthropic breakpoints.
+
+Manual example:
 
 ```go
-config := &genai.GenerateContentConfig{
-	ResponseSchema: &genai.Schema{
-		Type:     genai.TypeObject,
-		Required: []string{"name", "age"},
-		Properties: map[string]*genai.Schema{
-			"name": {Type: genai.TypeString},
-			"age":  {Type: genai.TypeInteger},
+oneHour := &adkanthropic.CacheBreakpoint{
+	TTL: anthropic.CacheControlEphemeralTTLTTL1h,
+}
+
+option := adkanthropic.WithPromptCaching(adkanthropic.PromptCachingConfig{
+	Mode:              adkanthropic.PromptCacheManual,
+	Tools:             oneHour,
+	SystemInstruction: oneHour,
+})
+```
+
+## Provider-native Vercel options
+
+Provider-native settings can be supplied by namespace:
+
+```go
+vercel.Config{
+	ProviderOptions: map[string]map[string]any{
+		"anthropic": {
+			"sendReasoning": false,
 		},
 	},
 }
 ```
 
-### Tool Choice (ToolConfig)
-
-Use `ToolConfig` to control how the model selects tools:
-
-```go
-config := &genai.GenerateContentConfig{
-	Tools: tools,
-	ToolConfig: &genai.ToolConfig{
-		FunctionCallingConfig: &genai.FunctionCallingConfig{
-			Mode: genai.FunctionCallingConfigModeAny, // must use a tool
-		},
-	},
-}
-```
-
-Mode mapping:
-| `genai` Mode | Anthropic `tool_choice` |
-|---|---|
-| `ModeAuto` | `auto` (model decides) |
-| `ModeAny` | `any` (must use a tool) |
-| `ModeAny` + single `AllowedFunctionNames` | `tool` (must use the named tool) |
-| `ModeNone` | omitted (no tool use) |
-
-### Extended Thinking (ThinkingConfig)
-
-Use `ThinkingConfig` to control extended thinking. Set `IncludeThoughts` when
-you also want summarized thinking text returned in the response:
-
-```go
-config := &genai.GenerateContentConfig{
-	ThinkingConfig: &genai.ThinkingConfig{
-		ThinkingLevel:  genai.ThinkingLevelHigh,
-		IncludeThoughts: true,
-	},
-}
-```
-
-Or set an explicit token budget:
-
-```go
-config := &genai.GenerateContentConfig{
-	ThinkingConfig: &genai.ThinkingConfig{
-		ThinkingBudget: ptr(int32(5000)),
-	},
-}
-```
-
-Mapping:
-| `genai` ThinkingConfig | Anthropic-compatible request behaviour |
-|---|---|
-| `ThinkingLevel: HIGH` | Adaptive Claude models use high effort; manual-only Claude models use a 10,000-token budget |
-| `ThinkingLevel: MEDIUM` | Adaptive Claude models use medium effort; manual-only Claude models use a 5,000-token budget |
-| `ThinkingLevel: LOW` | Adaptive Claude models use low effort; manual-only Claude models use the minimum 1,024-token budget |
-| `ThinkingLevel: MINIMAL` | Thinking disabled |
-| `ThinkingBudget` set | Claude uses manual thinking with the exact budget, overriding `ThinkingLevel`; non-Claude models use the provider default |
-| `IncludeThoughts: true` | Return summarized thinking text when thinking is enabled; does not enable thinking |
-| `IncludeThoughts: false` or unset | Omit thinking text while preserving its signature for multi-turn continuity; does not disable thinking |
-| Nil or otherwise empty config | Adaptive thinking with the provider's default effort on adaptive Claude models; provider default on all other models |
-
-For a verified Anthropic-compatible gateway that translates Anthropic effort
-levels for non-Claude models, use `NewModelWithOptions` and opt in explicitly:
-
-```go
-model, err := adkanthropic.NewModelWithOptions(
-	ctx,
-	"glm-5.3-flash",
-	config,
-	adkanthropic.WithGatewayEffortTranslation(),
-)
-```
-
-Thinking blocks in responses are mapped to `genai.Part` with `Thought=true` and
-`ThoughtSignature` preserved for multi-turn conversations. When thoughts are
-omitted, the part has empty text but retains its signature.
+The adapter rejects the `gateway` namespace and provider options that can override adapter-owned reasoning, cache, or data-policy fields.
 
 ## License
 
