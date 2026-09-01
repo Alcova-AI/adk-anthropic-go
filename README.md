@@ -14,7 +14,7 @@ go get github.com/Alcova-AI/adk-anthropic-go/v3
 - Tool calling and structured output
 - Text, image, and PDF input
 - Signed thinking continuity
-- Explicit adaptive-effort, token-budget, and disabled reasoning strategies
+- Explicit adaptive-effort, provider-native, and disabled reasoning strategies
 - Manual, gateway-automatic, and provider-default prompt caching
 - Caller-owned Anthropic SDK clients for direct, Vertex AI, and compatible endpoints
 - Typed Vercel routing, fail-closed ZDR policy, provider options, cost, and routing metadata
@@ -68,7 +68,7 @@ model, err := adkanthropic.NewModel(
 		RequestModel:   "zai/glm-5.3-flash",
 	},
 	adkanthropic.WithReasoning(adkanthropic.ReasoningConfig{
-		Strategy:     adkanthropic.ReasoningTokenBudget,
+		Strategy:     adkanthropic.ReasoningProviderNative,
 		DefaultLevel: genai.ThinkingLevelMedium,
 	}),
 	adkanthropic.WithVercelGateway(vercel.Config{
@@ -78,6 +78,7 @@ model, err := adkanthropic.NewModel(
 		},
 		// ZDRRequired is the zero-value default.
 		DataPolicy: vercel.ZDRRequired,
+		Projector:  vercel.ZAIModelOptions{},
 	}),
 )
 ```
@@ -101,9 +102,9 @@ The route selects one strategy. The adapter does not infer a strategy from the m
 |---|---|
 | `ReasoningDisabled` | Omits thinking and effort |
 | `ReasoningAdaptiveEffort` | Uses `thinking.type: adaptive` and maps low, medium, and high to `output_config.effort` |
-| `ReasoningTokenBudget` | Uses `thinking.type: enabled` and maps low, medium, and high to token budgets |
+| `ReasoningProviderNative` | Emits no Anthropic reasoning fields and projects the resolved level into typed Vercel model options |
 
-The default token-budget mapping is 1,024 for low, 5,000 for medium, and 10,000 for high. Supply `ReasoningBudgets` to change it. `ThinkingLevel: MINIMAL` disables thinking for that request.
+For Claude adaptive reasoning, `ThinkingLevel: MINIMAL` disables thinking for that request. Provider-native projectors define their model family's supported level mapping.
 
 The v3 adapter accepts level-based reasoning only. A request with `ThinkingBudget` returns an error because the route strategy is the single source of wire behaviour.
 

@@ -4,9 +4,9 @@
 
 - Require a caller-owned Anthropic SDK client, removing adapter-owned credential discovery, endpoint selection, and backend variants.
 - Separate canonical model identity from the request model sent to compatible endpoints.
-- Replace model-name reasoning inference with explicit disabled, adaptive-effort, and token-budget strategies. GenAI thinking levels remain request-overridable; explicit thinking budgets are no longer accepted.
+- Replace model-name reasoning inference with explicit disabled, adaptive-effort, and provider-native strategies. GenAI thinking levels remain request-overridable; explicit thinking budgets are no longer accepted.
 - Add provider-default, gateway-automatic, and manual prompt-cache modes.
-- Add a typed Vercel AI Gateway extension for provider routing, provider-native options, fail-closed zero-data-retention policy, and allowlisted cost and routing metadata on streaming and non-streaming responses.
+- Add a typed Vercel AI Gateway extension with OpenAI, Google, and Z.AI model-option projectors, provider routing, fail-closed zero-data-retention policy, and allowlisted cost and routing metadata on streaming and non-streaming responses.
 - Remove the v2 gateway-effort option and exported reasoning converter compatibility APIs.
 
 ## [v2.0.13] - Preserve gateway reasoning effort

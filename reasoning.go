@@ -30,61 +30,37 @@ const (
 	ReasoningDisabled ReasoningStrategy = iota
 	// ReasoningAdaptiveEffort uses Claude adaptive thinking with output effort.
 	ReasoningAdaptiveEffort
-	// ReasoningTokenBudget uses Anthropic enabled thinking with a token budget.
-	// Gateways can translate that native Messages shape to non-Claude models.
-	ReasoningTokenBudget
+	// ReasoningProviderNative projects the resolved genai thinking level into
+	// provider-specific Vercel model options. It emits no Anthropic reasoning
+	// fields.
+	ReasoningProviderNative
 )
-
-// ReasoningBudgets maps genai levels to Anthropic thinking token budgets.
-type ReasoningBudgets struct {
-	Low    int64
-	Medium int64
-	High   int64
-}
-
-// DefaultReasoningBudgets returns the adapter's standard level mapping.
-func DefaultReasoningBudgets() ReasoningBudgets {
-	return ReasoningBudgets{Low: 1024, Medium: 5000, High: 10000}
-}
 
 // ReasoningConfig configures route-level reasoning. DefaultLevel is used only
 // when a request omits ThinkingConfig or leaves ThinkingLevel unspecified.
 type ReasoningConfig struct {
 	Strategy     ReasoningStrategy
 	DefaultLevel genai.ThinkingLevel
-	Budgets      ReasoningBudgets
 }
 
 func (c ReasoningConfig) validate() error {
-	if c.Strategy > ReasoningTokenBudget {
+	if c.Strategy > ReasoningProviderNative {
 		return fmt.Errorf("unsupported reasoning strategy %d", c.Strategy)
 	}
 	if !validThinkingLevel(c.DefaultLevel) {
 		return fmt.Errorf("unsupported default thinking level %q", c.DefaultLevel)
 	}
-	if c.Strategy != ReasoningTokenBudget {
-		return nil
-	}
-	budgets := c.withDefaults().Budgets
-	if budgets.Low <= 0 || budgets.Medium <= 0 || budgets.High <= 0 {
-		return fmt.Errorf("reasoning token budgets must be positive")
-	}
-	if budgets.Low > budgets.Medium || budgets.Medium > budgets.High {
-		return fmt.Errorf("reasoning token budgets must be ordered low <= medium <= high")
-	}
 	return nil
 }
 
-func (c ReasoningConfig) withDefaults() ReasoningConfig {
-	if c.Strategy == ReasoningTokenBudget && c.Budgets == (ReasoningBudgets{}) {
-		c.Budgets = DefaultReasoningBudgets()
-	}
-	return c
+type resolvedReasoning struct {
+	ThinkingLevel   genai.ThinkingLevel
+	IncludeThoughts bool
 }
 
-func (c ReasoningConfig) mapThinking(cfg *genai.ThinkingConfig) (thinkingMapping, error) {
+func (c ReasoningConfig) resolve(cfg *genai.ThinkingConfig) (resolvedReasoning, error) {
 	if cfg != nil && cfg.ThinkingBudget != nil {
-		return thinkingMapping{}, fmt.Errorf("ThinkingBudget is not supported; use ThinkingLevel with the route reasoning strategy")
+		return resolvedReasoning{}, fmt.Errorf("ThinkingBudget is not supported; use ThinkingLevel with the route reasoning strategy")
 	}
 
 	level := c.DefaultLevel
@@ -96,16 +72,24 @@ func (c ReasoningConfig) mapThinking(cfg *genai.ThinkingConfig) (thinkingMapping
 		}
 	}
 	if !validThinkingLevel(level) {
-		return thinkingMapping{}, fmt.Errorf("unsupported thinking level %q", level)
+		return resolvedReasoning{}, fmt.Errorf("unsupported thinking level %q", level)
+	}
+	return resolvedReasoning{ThinkingLevel: level, IncludeThoughts: includeThoughts}, nil
+}
+
+func (c ReasoningConfig) mapThinking(cfg *genai.ThinkingConfig) (thinkingMapping, error) {
+	resolved, err := c.resolve(cfg)
+	if err != nil {
+		return thinkingMapping{}, err
 	}
 
 	switch c.Strategy {
 	case ReasoningDisabled:
 		return thinkingMapping{}, nil
 	case ReasoningAdaptiveEffort:
-		return adaptiveReasoning(level, includeThoughts), nil
-	case ReasoningTokenBudget:
-		return budgetReasoning(level, includeThoughts, c.withDefaults().Budgets), nil
+		return adaptiveReasoning(resolved.ThinkingLevel, resolved.IncludeThoughts), nil
+	case ReasoningProviderNative:
+		return thinkingMapping{}, nil
 	default:
 		return thinkingMapping{}, fmt.Errorf("unsupported reasoning strategy %d", c.Strategy)
 	}
@@ -138,31 +122,4 @@ func adaptiveReasoning(level genai.ThinkingLevel, includeThoughts bool) thinking
 		mapping.Effort = anthropic.OutputConfigEffortHigh
 	}
 	return mapping
-}
-
-func budgetReasoning(level genai.ThinkingLevel, includeThoughts bool, budgets ReasoningBudgets) thinkingMapping {
-	var budget int64
-	switch level {
-	case genai.ThinkingLevelLow:
-		budget = budgets.Low
-	case genai.ThinkingLevelMedium:
-		budget = budgets.Medium
-	case genai.ThinkingLevelHigh:
-		budget = budgets.High
-	}
-	if budget == 0 {
-		return thinkingMapping{}
-	}
-	display := anthropic.ThinkingConfigEnabledDisplayOmitted
-	if includeThoughts {
-		display = anthropic.ThinkingConfigEnabledDisplaySummarized
-	}
-	return thinkingMapping{
-		Thinking: anthropic.ThinkingConfigParamUnion{
-			OfEnabled: &anthropic.ThinkingConfigEnabledParam{
-				BudgetTokens: budget,
-				Display:      display,
-			},
-		},
-	}
 }

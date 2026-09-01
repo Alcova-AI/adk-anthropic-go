@@ -66,7 +66,7 @@ func WithReasoning(cfg ReasoningConfig) Option {
 		if err := cfg.validate(); err != nil {
 			return err
 		}
-		opts.reasoning = cfg.withDefaults()
+		opts.reasoning = cfg
 		return nil
 	}
 }

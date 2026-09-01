@@ -14,10 +14,23 @@
 
 package vercel
 
-import "testing"
+import (
+	"testing"
+
+	"google.golang.org/genai"
+)
+
+type testProjector map[string]map[string]any
+
+func (p testProjector) ProjectProviderOptions(ProviderOptionsInput) (map[string]map[string]any, error) {
+	return p, nil
+}
 
 func TestConfig_ZeroValueRequiresZDR(t *testing.T) {
-	options := (Config{}).WireProviderOptions()
+	options, err := (Config{}).WireProviderOptions(ProviderOptionsInput{})
+	if err != nil {
+		t.Fatalf("WireProviderOptions() error = %v", err)
+	}
 	gateway := options["gateway"].(map[string]any)
 	if gateway["zeroDataRetention"] != true {
 		t.Fatalf("zeroDataRetention = %v, want true", gateway["zeroDataRetention"])
@@ -39,7 +52,10 @@ func TestConfig_WireProviderOptions(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	options := cfg.WireProviderOptions()
+	options, err := cfg.WireProviderOptions(ProviderOptionsInput{})
+	if err != nil {
+		t.Fatalf("WireProviderOptions() error = %v", err)
+	}
 	gateway := options["gateway"].(map[string]any)
 	if gateway["sort"] != "ttft" || gateway["zeroDataRetention"] != false {
 		t.Fatalf("gateway = %#v", gateway)
@@ -47,6 +63,38 @@ func TestConfig_WireProviderOptions(t *testing.T) {
 	provider := options["anthropic"].(map[string]any)
 	if provider["sendReasoning"] != false {
 		t.Fatalf("anthropic options = %#v", provider)
+	}
+}
+
+func TestConfig_RejectsProjectedStaticConflict(t *testing.T) {
+	cfg := Config{
+		ProviderOptions: map[string]map[string]any{"openai": {"reasoningEffort": "low"}},
+		Projector:       OpenAIModelOptions{},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() error = nil")
+	}
+}
+
+func TestConfig_MergesStaticAndProjectedOptions(t *testing.T) {
+	cfg := Config{
+		ProviderOptions: map[string]map[string]any{"openai": {"serviceTier": "priority"}},
+		Projector:       OpenAIModelOptions{},
+	}
+	options, err := cfg.WireProviderOptions(ProviderOptionsInput{ThinkingLevel: genai.ThinkingLevelLow})
+	if err != nil {
+		t.Fatalf("WireProviderOptions() error = %v", err)
+	}
+	openai := options["openai"].(map[string]any)
+	if openai["serviceTier"] != "priority" || openai["reasoningEffort"] != "low" || openai["store"] != false {
+		t.Fatalf("OpenAI options = %#v", openai)
+	}
+}
+
+func TestConfig_RejectsProjectedGatewayNamespace(t *testing.T) {
+	cfg := Config{Projector: testProjector{"gateway": {"zeroDataRetention": false}}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() error = nil")
 	}
 }
 

@@ -79,6 +79,13 @@ func NewModel(cfg Config, options ...Option) (model.LLM, error) {
 			return nil, fmt.Errorf("configure model: %w", err)
 		}
 	}
+	if modelOpts.reasoning.Strategy == ReasoningProviderNative {
+		if modelOpts.vercel == nil || modelOpts.vercel.Projector == nil {
+			return nil, fmt.Errorf("provider-native reasoning requires a Vercel provider-options projector")
+		}
+	} else if modelOpts.vercel != nil && modelOpts.vercel.Projector != nil {
+		return nil, fmt.Errorf("Vercel provider-options projector requires provider-native reasoning")
+	}
 
 	// max_tokens precedence: a per-request GenerateContentConfig.MaxOutputTokens
 	// override wins in convertRequest; a deployment-level Config.DefaultMaxTokens
@@ -134,7 +141,11 @@ func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*
 		return nil, fmt.Errorf("failed to convert request: %w", err)
 	}
 
-	msg, err := m.client.Messages.New(ctx, params, m.requestOptions()...)
+	requestOptions, err := m.requestOptions(req, params.MaxTokens)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert request options: %w", err)
+	}
+	msg, err := m.client.Messages.New(ctx, params, requestOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call model: %w", err)
 	}
@@ -193,6 +204,11 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 			yield(nil, fmt.Errorf("failed to convert request: %w", err))
 			return
 		}
+		requestOptions, err := m.requestOptions(req, params.MaxTokens)
+		if err != nil {
+			yield(nil, fmt.Errorf("failed to convert request options: %w", err))
+			return
+		}
 
 		// Retry mid-stream overloads, but only while nothing has been yielded:
 		// once a delta has reached the consumer, a retry would replay content
@@ -202,7 +218,7 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 		// to callers and carries no continuation semantics.
 		includeThoughts := requestIncludesThoughts(req)
 		for attempt := 1; ; attempt++ {
-			streamErr := m.streamOnce(ctx, params, includeThoughts, yield)
+			streamErr := m.streamOnce(ctx, params, requestOptions, includeThoughts, yield)
 			if streamErr == nil {
 				return
 			}
@@ -233,10 +249,11 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 func (m *anthropicModel) streamOnce(
 	ctx context.Context,
 	params anthropic.MessageNewParams,
+	requestOptions []option.RequestOption,
 	includeThoughts bool,
 	yield func(*model.LLMResponse, error) bool,
 ) error {
-	stream := m.client.Messages.NewStreaming(ctx, params, m.requestOptions()...)
+	stream := m.client.Messages.NewStreaming(ctx, params, requestOptions...)
 	// Next() leaves the response body open on the SSE error-event and
 	// consumer-stop paths; without this, each retried attempt would leak its
 	// predecessor's connection. Close is nil-safe when the request itself
@@ -502,13 +519,27 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 	return params, nil
 }
 
-func (m *anthropicModel) requestOptions() []option.RequestOption {
+func (m *anthropicModel) requestOptions(req *model.LLMRequest, maxOutputTokens int64) ([]option.RequestOption, error) {
 	if m.vercel == nil {
-		return nil
+		return nil, nil
 	}
-	return []option.RequestOption{
-		option.WithJSONSet("providerOptions", m.vercel.WireProviderOptions()),
+	var thinkingCfg *genai.ThinkingConfig
+	if req != nil && req.Config != nil {
+		thinkingCfg = req.Config.ThinkingConfig
 	}
+	resolved, err := m.reasoning.resolve(thinkingCfg)
+	if err != nil {
+		return nil, err
+	}
+	providerOptions, err := m.vercel.WireProviderOptions(vercel.ProviderOptionsInput{
+		ThinkingLevel:   resolved.ThinkingLevel,
+		IncludeThoughts: resolved.IncludeThoughts,
+		MaxOutputTokens: maxOutputTokens,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return []option.RequestOption{option.WithJSONSet("providerOptions", providerOptions)}, nil
 }
 
 func (m *anthropicModel) attachResponseMetadata(resp *model.LLMResponse, rawJSON string) {

@@ -83,7 +83,6 @@ func TestReasoningStrategies(t *testing.T) {
 		config       ReasoningConfig
 		request      *genai.ThinkingConfig
 		wantAdaptive bool
-		wantBudget   int64
 		wantEffort   anthropic.OutputConfigEffort
 		wantDisplay  string
 	}{
@@ -113,16 +112,18 @@ func TestReasoningStrategies(t *testing.T) {
 			request: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMinimal},
 		},
 		{
-			name:        "budget maps medium",
-			config:      ReasoningConfig{Strategy: ReasoningTokenBudget},
-			request:     &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMedium, IncludeThoughts: true},
-			wantBudget:  5000,
-			wantDisplay: "summarized",
+			name:    "provider native emits no Anthropic reasoning",
+			config:  ReasoningConfig{Strategy: ReasoningProviderNative, DefaultLevel: genai.ThinkingLevelHigh},
+			request: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow, IncludeThoughts: true},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := mustTestModel(t, "route-model", WithReasoning(tt.config))
+			options := []Option{WithReasoning(tt.config)}
+			if tt.config.Strategy == ReasoningProviderNative {
+				options = append(options, WithVercelGateway(vercel.Config{Projector: vercel.OpenAIModelOptions{}}))
+			}
+			m := mustTestModel(t, "route-model", options...)
 			params, err := m.convertRequest(testRequest(tt.request))
 			if err != nil {
 				t.Fatalf("convertRequest() error = %v", err)
@@ -131,11 +132,7 @@ func TestReasoningStrategies(t *testing.T) {
 				t.Fatalf("adaptive = %v, want %v", got, tt.wantAdaptive)
 			}
 			if params.Thinking.OfEnabled != nil {
-				if params.Thinking.OfEnabled.BudgetTokens != tt.wantBudget {
-					t.Fatalf("budget = %d, want %d", params.Thinking.OfEnabled.BudgetTokens, tt.wantBudget)
-				}
-			} else if tt.wantBudget != 0 {
-				t.Fatalf("missing enabled thinking with budget %d", tt.wantBudget)
+				t.Fatalf("unexpected enabled thinking = %+v", params.Thinking.OfEnabled)
 			}
 			if params.OutputConfig.Effort != tt.wantEffort {
 				t.Fatalf("effort = %q, want %q", params.OutputConfig.Effort, tt.wantEffort)
@@ -154,11 +151,47 @@ func TestReasoningStrategies(t *testing.T) {
 }
 
 func TestReasoningRejectsExplicitBudget(t *testing.T) {
-	m := mustTestModel(t, "route-model", WithReasoning(ReasoningConfig{Strategy: ReasoningTokenBudget}))
+	m := mustTestModel(t, "route-model", WithReasoning(ReasoningConfig{Strategy: ReasoningAdaptiveEffort}))
 	budget := int32(2048)
 	_, err := m.convertRequest(testRequest(&genai.ThinkingConfig{ThinkingBudget: &budget}))
 	if err == nil || !strings.Contains(err.Error(), "ThinkingBudget is not supported") {
 		t.Fatalf("convertRequest() error = %v", err)
+	}
+}
+
+func TestProviderNativeRequiresVercelProjector(t *testing.T) {
+	tests := []struct {
+		name    string
+		options []Option
+	}{
+		{
+			name: "missing Vercel config",
+			options: []Option{WithReasoning(ReasoningConfig{
+				Strategy: ReasoningProviderNative,
+			})},
+		},
+		{
+			name: "missing projector",
+			options: []Option{
+				WithReasoning(ReasoningConfig{Strategy: ReasoningProviderNative}),
+				WithVercelGateway(vercel.Config{}),
+			},
+		},
+		{
+			name: "projector on adaptive strategy",
+			options: []Option{
+				WithReasoning(ReasoningConfig{Strategy: ReasoningAdaptiveEffort}),
+				WithVercelGateway(vercel.Config{Projector: vercel.OpenAIModelOptions{}}),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewModel(Config{Client: testClient(), CanonicalModel: "route-model"}, tt.options...)
+			if err == nil {
+				t.Fatal("NewModel() error = nil")
+			}
+		})
 	}
 }
 
@@ -214,8 +247,11 @@ func TestVercelGateway_RequestAndResponseMetadata(t *testing.T) {
 		CanonicalModel: "glm-5.3-flash",
 		RequestModel:   "zai/glm-5.3-flash",
 	},
-		WithReasoning(ReasoningConfig{Strategy: ReasoningTokenBudget, DefaultLevel: genai.ThinkingLevelMedium}),
-		WithVercelGateway(vercel.Config{Routing: vercel.Routing{Only: []string{"zai", "baseten"}}}),
+		WithReasoning(ReasoningConfig{Strategy: ReasoningProviderNative, DefaultLevel: genai.ThinkingLevelMedium}),
+		WithVercelGateway(vercel.Config{
+			Routing:   vercel.Routing{Only: []string{"zai", "baseten"}},
+			Projector: vercel.ZAIModelOptions{},
+		}),
 	)
 	if err != nil {
 		t.Fatalf("NewModel() error = %v", err)
@@ -238,8 +274,12 @@ func TestVercelGateway_RequestAndResponseMetadata(t *testing.T) {
 	if gateway["zeroDataRetention"] != true {
 		t.Fatalf("zeroDataRetention = %v, want true", gateway["zeroDataRetention"])
 	}
-	if got := decoded["thinking"].(map[string]any)["budget_tokens"]; got != float64(5000) {
-		t.Fatalf("thinking budget = %v, want 5000", got)
+	if _, ok := decoded["thinking"]; ok {
+		t.Fatalf("Anthropic thinking = %v, want omitted", decoded["thinking"])
+	}
+	zai := providerOptions["zai"].(map[string]any)
+	if got := zai["reasoningEffort"]; got != "high" {
+		t.Fatalf("Z.AI reasoning effort = %v, want high", got)
 	}
 
 	metadata, ok := vercel.MetadataFromResponse(response)
@@ -251,9 +291,86 @@ func TestVercelGateway_RequestAndResponseMetadata(t *testing.T) {
 	}
 }
 
+func TestVercelGateway_ProviderNativeReasoningUsesRequestOverrides(t *testing.T) {
+	requestBodies := make(chan map[string]any, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requestBodies <- decoded
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"id":"msg_1","type":"message","role":"assistant","model":"zai/glm-5.3-flash",
+			"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn","stop_sequence":null,
+			"usage":{"input_tokens":4,"output_tokens":2}
+		}`)
+	}))
+	defer srv.Close()
+
+	client := anthropic.NewClient(option.WithAPIKey("gateway-key"), option.WithBaseURL(srv.URL))
+	llm, err := NewModel(Config{
+		Client: client, CanonicalModel: "glm-5.3-flash", RequestModel: "zai/glm-5.3-flash",
+	},
+		WithDefaultMaxTokens(64_000),
+		WithReasoning(ReasoningConfig{Strategy: ReasoningProviderNative, DefaultLevel: genai.ThinkingLevelHigh}),
+		WithVercelGateway(vercel.Config{Projector: vercel.ZAIModelOptions{}}),
+	)
+	if err != nil {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	requests := []*model.LLMRequest{
+		testRequest(&genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow}),
+		testRequest(nil),
+	}
+	requests[0].Config.MaxOutputTokens = 4096
+	requests[1].Config.MaxOutputTokens = 8192
+	for _, request := range requests {
+		for _, err := range llm.GenerateContent(t.Context(), request, false) {
+			if err != nil {
+				t.Fatalf("GenerateContent() error = %v", err)
+			}
+		}
+	}
+
+	assertZAIEffort := func(wantEffort string, wantMaxTokens float64) {
+		t.Helper()
+		decoded := <-requestBodies
+		if got := decoded["max_tokens"]; got != wantMaxTokens {
+			t.Fatalf("max_tokens = %v, want %.0f", got, wantMaxTokens)
+		}
+		if _, ok := decoded["thinking"]; ok {
+			t.Fatalf("Anthropic thinking = %v, want omitted", decoded["thinking"])
+		}
+		if outputConfig, ok := decoded["output_config"].(map[string]any); ok {
+			if _, hasEffort := outputConfig["effort"]; hasEffort {
+				t.Fatalf("Anthropic output_config.effort = %v, want omitted", outputConfig["effort"])
+			}
+		}
+		providerOptions := decoded["providerOptions"].(map[string]any)
+		zai := providerOptions["zai"].(map[string]any)
+		if got := zai["reasoningEffort"]; got != wantEffort {
+			t.Fatalf("Z.AI reasoningEffort = %v, want %q", got, wantEffort)
+		}
+	}
+
+	assertZAIEffort("low", 4096)
+	assertZAIEffort("max", 8192)
+}
+
 func TestVercelGateway_RetentionAllowedIsExplicit(t *testing.T) {
 	m := mustTestModel(t, "route-model", WithVercelGateway(vercel.Config{DataPolicy: vercel.RetentionAllowed}))
-	options := m.vercel.WireProviderOptions()
+	options, err := m.vercel.WireProviderOptions(vercel.ProviderOptionsInput{})
+	if err != nil {
+		t.Fatalf("WireProviderOptions() error = %v", err)
+	}
 	gateway := options["gateway"].(map[string]any)
 	if gateway["zeroDataRetention"] != false {
 		t.Fatalf("zeroDataRetention = %v, want false", gateway["zeroDataRetention"])
