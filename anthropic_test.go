@@ -365,6 +365,66 @@ func TestVercelGateway_ProviderNativeReasoningUsesRequestOverrides(t *testing.T)
 	assertZAIEffort("max", 8192)
 }
 
+func TestVercelGateway_StreamingUsesProviderNativeRequestOptions(t *testing.T) {
+	requestBody := make(chan map[string]any, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requestBody <- decoded
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, successSSE)
+	}))
+	defer srv.Close()
+
+	client := anthropic.NewClient(option.WithAPIKey("gateway-key"), option.WithBaseURL(srv.URL))
+	llm, err := NewModel(Config{
+		Client: client, CanonicalModel: "glm-5.3-flash", RequestModel: "zai/glm-5.3-flash",
+	},
+		WithDefaultMaxTokens(64_000),
+		WithReasoning(ReasoningConfig{Strategy: ReasoningProviderNative, DefaultLevel: genai.ThinkingLevelHigh}),
+		WithVercelGateway(vercel.Config{Projector: vercel.ZAIModelOptions{}}),
+	)
+	if err != nil {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	request := testRequest(&genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow, IncludeThoughts: true})
+	request.Config.MaxOutputTokens = 4096
+	for _, err := range llm.GenerateContent(t.Context(), request, true) {
+		if err != nil {
+			t.Fatalf("GenerateContent() error = %v", err)
+		}
+	}
+
+	decoded := <-requestBody
+	if got := decoded["max_tokens"]; got != float64(4096) {
+		t.Fatalf("max_tokens = %v, want 4096", got)
+	}
+	if got := decoded["stream"]; got != true {
+		t.Fatalf("stream = %v, want true", got)
+	}
+	if _, ok := decoded["thinking"]; ok {
+		t.Fatalf("Anthropic thinking = %v, want omitted", decoded["thinking"])
+	}
+	providerOptions := decoded["providerOptions"].(map[string]any)
+	gateway := providerOptions["gateway"].(map[string]any)
+	if got := gateway["zeroDataRetention"]; got != true {
+		t.Fatalf("zeroDataRetention = %v, want true", got)
+	}
+	zai := providerOptions["zai"].(map[string]any)
+	if got := zai["reasoningEffort"]; got != "low" {
+		t.Fatalf("Z.AI reasoningEffort = %v, want low", got)
+	}
+}
+
 func TestVercelGateway_RetentionAllowedIsExplicit(t *testing.T) {
 	m := mustTestModel(t, "route-model", WithVercelGateway(vercel.Config{DataPolicy: vercel.RetentionAllowed}))
 	options, err := m.vercel.WireProviderOptions(vercel.ProviderOptionsInput{})

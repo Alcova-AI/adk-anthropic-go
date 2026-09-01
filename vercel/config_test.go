@@ -37,6 +37,13 @@ func TestConfig_ZeroValueRequiresZDR(t *testing.T) {
 	}
 }
 
+func TestConfig_WireProviderOptionsRejectsInvalidDataPolicy(t *testing.T) {
+	_, err := (Config{DataPolicy: DataPolicy(255)}).WireProviderOptions(ProviderOptionsInput{})
+	if err == nil {
+		t.Fatal("WireProviderOptions() error = nil")
+	}
+}
+
 func TestConfig_WireProviderOptions(t *testing.T) {
 	cfg := Config{
 		Routing: Routing{

@@ -169,6 +169,9 @@ func isReservedProviderKey(key string) bool {
 // WireProviderOptions returns the JSON object expected by Vercel's
 // providerOptions request field.
 func (c Config) WireProviderOptions(input ProviderOptionsInput) (map[string]any, error) {
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
 	providerOptions := make(map[string]any, len(c.ProviderOptions)+1)
 	for namespace, values := range c.ProviderOptions {
 		copyValues := make(map[string]any, len(values))
