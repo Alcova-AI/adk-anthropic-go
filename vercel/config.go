@@ -93,14 +93,25 @@ func (c Config) Validate() error {
 		return err
 	}
 	for namespace, values := range c.ProviderOptions {
-		if strings.TrimSpace(namespace) == "" {
+		trimmedNamespace := strings.TrimSpace(namespace)
+		if trimmedNamespace == "" {
 			return fmt.Errorf("Vercel provider option namespace must not be empty")
 		}
-		if strings.EqualFold(namespace, "gateway") {
+		if namespace != trimmedNamespace {
+			return fmt.Errorf("Vercel provider option namespace %q must not have leading or trailing whitespace", namespace)
+		}
+		if strings.EqualFold(trimmedNamespace, "gateway") {
 			return fmt.Errorf("Vercel provider option namespace %q is reserved", namespace)
 		}
 		for key := range values {
-			if isReservedProviderKey(key) {
+			trimmedKey := strings.TrimSpace(key)
+			if trimmedKey == "" {
+				return fmt.Errorf("Vercel provider option %s has an empty key", namespace)
+			}
+			if key != trimmedKey {
+				return fmt.Errorf("Vercel provider option %s.%q must not have leading or trailing whitespace", namespace, key)
+			}
+			if isReservedProviderKey(trimmedKey) {
 				return fmt.Errorf("Vercel provider option %s.%s conflicts with adapter-owned reasoning, caching, or data policy", namespace, key)
 			}
 		}
@@ -123,15 +134,23 @@ func (c Config) Validate() error {
 
 func validateProjectedProviderOptions(static, projected map[string]map[string]any) error {
 	for namespace, values := range projected {
-		if strings.TrimSpace(namespace) == "" {
+		trimmedNamespace := strings.TrimSpace(namespace)
+		if trimmedNamespace == "" {
 			return fmt.Errorf("projected Vercel provider option namespace must not be empty")
 		}
-		if strings.EqualFold(namespace, "gateway") {
+		if namespace != trimmedNamespace {
+			return fmt.Errorf("projected Vercel provider option namespace %q must not have leading or trailing whitespace", namespace)
+		}
+		if strings.EqualFold(trimmedNamespace, "gateway") {
 			return fmt.Errorf("projected Vercel provider option namespace %q is reserved", namespace)
 		}
 		for key := range values {
-			if strings.TrimSpace(key) == "" {
+			trimmedKey := strings.TrimSpace(key)
+			if trimmedKey == "" {
 				return fmt.Errorf("projected Vercel provider option %s has an empty key", namespace)
+			}
+			if key != trimmedKey {
+				return fmt.Errorf("projected Vercel provider option %s.%q must not have leading or trailing whitespace", namespace, key)
 			}
 			if _, conflict := static[namespace][key]; conflict {
 				return fmt.Errorf("projected Vercel provider option %s.%s conflicts with a static option", namespace, key)
@@ -144,14 +163,17 @@ func validateProjectedProviderOptions(static, projected map[string]map[string]an
 func validateProviders(field string, providers []string) error {
 	seen := make(map[string]struct{}, len(providers))
 	for _, provider := range providers {
-		provider = strings.TrimSpace(provider)
-		if provider == "" {
+		trimmedProvider := strings.TrimSpace(provider)
+		if trimmedProvider == "" {
 			return fmt.Errorf("Vercel routing %s contains an empty provider", field)
 		}
-		if _, ok := seen[provider]; ok {
+		if provider != trimmedProvider {
+			return fmt.Errorf("Vercel routing %s provider %q must not have leading or trailing whitespace", field, provider)
+		}
+		if _, ok := seen[trimmedProvider]; ok {
 			return fmt.Errorf("Vercel routing %s contains duplicate provider %q", field, provider)
 		}
-		seen[provider] = struct{}{}
+		seen[trimmedProvider] = struct{}{}
 	}
 	return nil
 }
