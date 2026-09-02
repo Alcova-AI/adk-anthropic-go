@@ -2,12 +2,23 @@
 
 ## [v3.0.0] - Make model routes explicit
 
-- Require a caller-owned Anthropic SDK client, removing adapter-owned credential discovery, endpoint selection, and backend variants.
-- Separate canonical model identity from the request model sent to compatible endpoints.
-- Replace model-name reasoning inference with explicit disabled, adaptive-effort, and provider-native strategies. GenAI thinking levels remain request-overridable; explicit thinking budgets are no longer accepted.
-- Add provider-default, gateway-automatic, and manual prompt-cache modes.
-- Add a typed Vercel AI Gateway extension with OpenAI, Google, and Z.AI model-option projectors, provider routing, fail-closed zero-data-retention policy, and allowlisted cost and routing metadata on streaming and non-streaming responses.
+### Breaking changes
+
+- Change the module import path from `/v2` to `/v3`.
+- Replace `NewModel(ctx, model, config)` and `NewModelWithOptions` with a caller-owned Anthropic SDK client and `NewModel(Config, ...Option)`.
+- Remove adapter-owned credential discovery, endpoint selection, backend variants, and their configuration fields.
+- Replace model-name reasoning inference with explicit disabled, adaptive-effort, and provider-native strategies. GenAI thinking levels remain request-overridable, but `ThinkingBudget` is rejected and the v2 manual token-budget fallback for older Claude models is removed.
+- Replace the v2 prompt-caching configuration with explicit provider-default, gateway-automatic, and manual cache modes.
 - Remove the v2 gateway-effort option and exported reasoning converter compatibility APIs.
+
+### Added
+
+- Add first-class Vercel AI Gateway support behind ADK's `model.LLM` interface through Vercel's Anthropic-compatible Messages endpoint. ADK agents can use Claude and supported non-Claude gateway models with typed OpenAI, Google, and Z.AI reasoning projectors, provider routing, fail-closed zero-data-retention policy, and allowlisted resolved-provider and request-cost metadata on streaming and non-streaming responses.
+- Separate canonical model identity from the request model sent to compatible endpoints.
+
+### Migration
+
+See [Migrating from v2](README.md#migrating-from-v2).
 
 ## [v2.0.13] - Preserve gateway reasoning effort
 

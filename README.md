@@ -8,6 +8,74 @@ Anthropic Messages API support for Google's [Agent Development Kit](https://gith
 go get github.com/Alcova-AI/adk-anthropic-go/v3
 ```
 
+## Migrating from v2
+
+v3 is source-incompatible with v2. It still implements ADK's `model.LLM`
+interface, but model construction and route behaviour are now explicit.
+
+### Update the module path
+
+```go
+// v2
+import adkanthropic "github.com/Alcova-AI/adk-anthropic-go/v2"
+
+// v3
+import adkanthropic "github.com/Alcova-AI/adk-anthropic-go/v3"
+```
+
+### Construct the Anthropic client
+
+v2 accepted credentials and endpoint selection through the adapter config:
+
+```go
+model, err := adkanthropic.NewModel(ctx, anthropic.ModelClaudeSonnet4_6, &adkanthropic.Config{
+	APIKey: os.Getenv("ANTHROPIC_API_KEY"),
+})
+```
+
+In v3, the caller constructs and owns the Anthropic SDK client:
+
+```go
+client := anthropic.NewClient(option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
+
+model, err := adkanthropic.NewModel(adkanthropic.Config{
+	Client:         client,
+	CanonicalModel: anthropic.ModelClaudeSonnet4_6,
+})
+```
+
+For Vertex AI, replace the v2 variant, project, and location fields with a
+client constructed using `vertex.WithGoogleAuth`, as shown in
+[Anthropic on Vertex AI](#anthropic-on-vertex-ai).
+
+### Move route behaviour to options
+
+| v2 | v3 |
+|---|---|
+| `Config.DefaultMaxTokens` | `WithDefaultMaxTokens` |
+| `Config.PromptCaching` | `WithPromptCaching` with an explicit cache mode |
+| Model-name reasoning inference | `WithReasoning` with an explicit strategy |
+| `WithGatewayEffortTranslation` | `ReasoningProviderNative` with a provider projector |
+| `Config.APIKey` and `Config.BaseURL` | Anthropic SDK client options |
+| `Config.Variant` and Vertex fields | `vertex.WithGoogleAuth` |
+| `ThinkingBudget` | Unsupported; use `ThinkingLevel` |
+
+v3 does not provide the v2 manual token-budget fallback for older Claude
+models. Use adaptive-effort reasoning with supported Claude models, use a
+provider-native projector for supported gateway models, or disable reasoning.
+
+### Use Vercel AI Gateway with ADK
+
+v3 can use Vercel AI Gateway as the endpoint behind ADK's `model.LLM`
+interface. It sends Anthropic Messages-compatible requests to Vercel, so ADK
+agents can use Claude and non-Claude models that Vercel exposes through that
+endpoint.
+
+Typed provider-native reasoning projectors are included for OpenAI, Google,
+and Z.AI models. Vercel routes require zero-data-retention by default and can
+return typed metadata for the resolved provider and actual request cost. See
+[Vercel AI Gateway](#vercel-ai-gateway) for the complete configuration.
+
 ## Features
 
 - Streaming and non-streaming responses
