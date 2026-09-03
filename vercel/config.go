@@ -51,12 +51,13 @@ type Routing struct {
 	Sort  Sort
 }
 
-// ProviderOptionsInput contains the resolved request values that a model
-// family can project into its native Vercel provider-options namespace.
+// ProviderOptionsInput contains the resolved request values used to build
+// model-family and gateway provider options.
 type ProviderOptionsInput struct {
-	ThinkingLevel   genai.ThinkingLevel
-	IncludeThoughts bool
-	MaxOutputTokens int64
+	ThinkingLevel           genai.ThinkingLevel
+	IncludeThoughts         bool
+	MaxOutputTokens         int64
+	GatewayAutomaticCaching bool
 }
 
 // ProviderOptionsProjector converts resolved request values into deterministic
@@ -232,6 +233,9 @@ func (c Config) WireProviderOptions(input ProviderOptionsInput) (map[string]any,
 	}
 	if c.Routing.Sort != SortDefault {
 		gateway["sort"] = string(c.Routing.Sort)
+	}
+	if input.GatewayAutomaticCaching {
+		gateway["caching"] = "auto"
 	}
 	providerOptions["gateway"] = gateway
 	return providerOptions, nil

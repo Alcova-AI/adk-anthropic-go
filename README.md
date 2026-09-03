@@ -181,7 +181,7 @@ The v3 adapter accepts level-based reasoning only. A request with `ThinkingBudge
 Use `WithPromptCaching` to select one cache policy:
 
 - `PromptCacheProviderDefault` sends no explicit cache controls.
-- `PromptCacheGatewayAutomatic` lets the gateway manage breakpoints.
+- `PromptCacheGatewayAutomatic` lets Vercel AI Gateway manage breakpoints and requires `WithVercelGateway`.
 - `PromptCacheManual` applies the configured Anthropic breakpoints.
 
 Manual example:

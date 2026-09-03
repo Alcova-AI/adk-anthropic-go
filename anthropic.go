@@ -86,6 +86,9 @@ func NewModel(cfg Config, options ...Option) (model.LLM, error) {
 	} else if modelOpts.vercel != nil && modelOpts.vercel.Projector != nil {
 		return nil, fmt.Errorf("Vercel provider-options projector requires provider-native reasoning")
 	}
+	if modelOpts.promptCaching.Mode == PromptCacheGatewayAutomatic && modelOpts.vercel == nil {
+		return nil, fmt.Errorf("gateway-automatic prompt caching requires WithVercelGateway")
+	}
 
 	// max_tokens precedence: a per-request GenerateContentConfig.MaxOutputTokens
 	// override wins in convertRequest; a deployment-level Config.DefaultMaxTokens
@@ -532,9 +535,10 @@ func (m *anthropicModel) requestOptions(req *model.LLMRequest, maxOutputTokens i
 		return nil, err
 	}
 	providerOptions, err := m.vercel.WireProviderOptions(vercel.ProviderOptionsInput{
-		ThinkingLevel:   resolved.ThinkingLevel,
-		IncludeThoughts: resolved.IncludeThoughts,
-		MaxOutputTokens: maxOutputTokens,
+		ThinkingLevel:           resolved.ThinkingLevel,
+		IncludeThoughts:         resolved.IncludeThoughts,
+		MaxOutputTokens:         maxOutputTokens,
+		GatewayAutomaticCaching: m.promptCaching.Mode == PromptCacheGatewayAutomatic,
 	})
 	if err != nil {
 		return nil, err

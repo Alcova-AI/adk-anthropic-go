@@ -35,6 +35,20 @@ func TestConfig_ZeroValueRequiresZDR(t *testing.T) {
 	if gateway["zeroDataRetention"] != true {
 		t.Fatalf("zeroDataRetention = %v, want true", gateway["zeroDataRetention"])
 	}
+	if _, ok := gateway["caching"]; ok {
+		t.Fatalf("caching = %v, want omitted", gateway["caching"])
+	}
+}
+
+func TestConfig_WireProviderOptionsEnablesAutomaticCaching(t *testing.T) {
+	options, err := (Config{}).WireProviderOptions(ProviderOptionsInput{GatewayAutomaticCaching: true})
+	if err != nil {
+		t.Fatalf("WireProviderOptions() error = %v", err)
+	}
+	gateway := options["gateway"].(map[string]any)
+	if gateway["caching"] != "auto" {
+		t.Fatalf("caching = %v, want auto", gateway["caching"])
+	}
 }
 
 func TestConfig_WireProviderOptionsRejectsInvalidDataPolicy(t *testing.T) {

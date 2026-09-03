@@ -28,7 +28,7 @@ const (
 	PromptCacheProviderDefault PromptCacheMode = iota
 	// PromptCacheManual applies the configured Anthropic cache breakpoints.
 	PromptCacheManual
-	// PromptCacheGatewayAutomatic lets a compatible gateway place breakpoints.
+	// PromptCacheGatewayAutomatic lets Vercel AI Gateway place breakpoints.
 	PromptCacheGatewayAutomatic
 )
 

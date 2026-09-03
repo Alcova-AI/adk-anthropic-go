@@ -248,6 +248,7 @@ func TestVercelGateway_RequestAndResponseMetadata(t *testing.T) {
 		RequestModel:   "zai/glm-5.3-flash",
 	},
 		WithReasoning(ReasoningConfig{Strategy: ReasoningProviderNative, DefaultLevel: genai.ThinkingLevelMedium}),
+		WithPromptCaching(PromptCachingConfig{Mode: PromptCacheGatewayAutomatic}),
 		WithVercelGateway(vercel.Config{
 			Routing:   vercel.Routing{Only: []string{"zai", "baseten"}},
 			Projector: vercel.ZAIModelOptions{},
@@ -273,6 +274,9 @@ func TestVercelGateway_RequestAndResponseMetadata(t *testing.T) {
 	gateway := providerOptions["gateway"].(map[string]any)
 	if gateway["zeroDataRetention"] != true {
 		t.Fatalf("zeroDataRetention = %v, want true", gateway["zeroDataRetention"])
+	}
+	if gateway["caching"] != "auto" {
+		t.Fatalf("caching = %v, want auto", gateway["caching"])
 	}
 	if _, ok := decoded["thinking"]; ok {
 		t.Fatalf("Anthropic thinking = %v, want omitted", decoded["thinking"])
@@ -444,6 +448,13 @@ func TestPromptCachingModes(t *testing.T) {
 		Tools: breakpoint,
 	}))
 	if err == nil || !strings.Contains(err.Error(), "breakpoints require manual mode") {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	_, err = NewModel(Config{Client: testClient(), CanonicalModel: "route-model"}, WithPromptCaching(PromptCachingConfig{
+		Mode: PromptCacheGatewayAutomatic,
+	}))
+	if err == nil || !strings.Contains(err.Error(), "requires WithVercelGateway") {
 		t.Fatalf("NewModel() error = %v", err)
 	}
 
