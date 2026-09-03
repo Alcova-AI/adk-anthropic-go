@@ -15,6 +15,7 @@
 
 - Add first-class Vercel AI Gateway support behind ADK's `model.LLM` interface through Vercel's Anthropic-compatible Messages endpoint. ADK agents can use Claude and supported non-Claude gateway models with typed OpenAI, Google, and Z.AI reasoning projectors, provider routing, fail-closed zero-data-retention policy, and allowlisted resolved-provider and request-cost metadata on streaming and non-streaming responses.
 - Separate canonical model identity from the request model sent to compatible endpoints.
+- Expose typed response metadata for the Anthropic message ID and aggregate, five-minute, and one-hour cache-creation token counts.
 
 ### Migration
 

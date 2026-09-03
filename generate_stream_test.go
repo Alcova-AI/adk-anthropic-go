@@ -269,6 +269,10 @@ func TestGenerateStream_PreservesVercelMetadata(t *testing.T) {
 	if metadata.GenerationID != "gen_stream" || metadata.ResolvedProvider != "zai" {
 		t.Fatalf("metadata = %+v", metadata)
 	}
+	responseMetadata, ok := ResponseMetadataFromResponse(pairs[1].resp)
+	if !ok || responseMetadata.MessageID != "msg_1" {
+		t.Fatalf("Anthropic response metadata = %+v, found=%t", responseMetadata, ok)
+	}
 }
 
 func TestGenerateStream_UsesCumulativeGatewayUsageFromMessageDelta(t *testing.T) {
@@ -292,6 +296,10 @@ func TestGenerateStream_UsesCumulativeGatewayUsageFromMessageDelta(t *testing.T)
 	}
 	if got := final.resp.UsageMetadata.CandidatesTokenCount; got != 5 {
 		t.Errorf("final output tokens = %d, want 5", got)
+	}
+	metadata, ok := ResponseMetadataFromResponse(final.resp)
+	if !ok || metadata.CacheCreationInputTokens != 2 {
+		t.Fatalf("Anthropic response metadata = %+v, found=%t", metadata, ok)
 	}
 }
 

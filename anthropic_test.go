@@ -293,6 +293,10 @@ func TestVercelGateway_RequestAndResponseMetadata(t *testing.T) {
 	if metadata.ResolvedProvider != "baseten" || metadata.CostUSD == nil || *metadata.CostUSD != 0.0123 {
 		t.Fatalf("metadata = %+v", metadata)
 	}
+	responseMetadata, ok := ResponseMetadataFromResponse(response)
+	if !ok || responseMetadata.MessageID != "msg_1" {
+		t.Fatalf("Anthropic response metadata = %+v, found=%t", responseMetadata, ok)
+	}
 }
 
 func TestVercelGateway_ProviderNativeReasoningUsesRequestOverrides(t *testing.T) {

@@ -158,7 +158,8 @@ func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*
 		return nil, fmt.Errorf("failed to convert response: %w", err)
 	}
 	filterResponseThoughts(resp, requestIncludesThoughts(req))
-	m.attachResponseMetadata(resp, msg.RawJSON())
+	attachAnthropicResponseMetadata(resp, msg)
+	m.attachVercelResponseMetadata(resp, msg.RawJSON())
 
 	return resp, nil
 }
@@ -344,10 +345,11 @@ func (m *anthropicModel) streamOnce(
 		return nil
 	}
 	filterResponseThoughts(finalResp, includeThoughts)
+	attachAnthropicResponseMetadata(finalResp, &message)
 	if hasGatewayMetadata {
 		m.attachParsedResponseMetadata(finalResp, gatewayMetadata)
 	} else {
-		m.attachResponseMetadata(finalResp, message.RawJSON())
+		m.attachVercelResponseMetadata(finalResp, message.RawJSON())
 	}
 	finalResp.TurnComplete = true
 	yield(finalResp, nil)
@@ -546,7 +548,7 @@ func (m *anthropicModel) requestOptions(req *model.LLMRequest, maxOutputTokens i
 	return []option.RequestOption{option.WithJSONSet("providerOptions", providerOptions)}, nil
 }
 
-func (m *anthropicModel) attachResponseMetadata(resp *model.LLMResponse, rawJSON string) {
+func (m *anthropicModel) attachVercelResponseMetadata(resp *model.LLMResponse, rawJSON string) {
 	if m.vercel == nil || resp == nil {
 		return
 	}
