@@ -23,1010 +23,511 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
+
+	"github.com/Alcova-AI/adk-anthropic-go/v3/vercel"
 )
 
-// testMaxTokens is an arbitrary non-zero max_tokens for constructing model
-// fixtures in tests that don't exercise token-limit behaviour.
-const testMaxTokens = 64000
-
-func TestNewModel_ConfigBehavior(t *testing.T) {
+func TestNewModel_RequiresConstructedClientAndCanonicalModel(t *testing.T) {
 	tests := []struct {
-		name          string
-		cfg           *Config
-		wantMaxTokens int
-		wantVariant   string
+		name string
+		cfg  Config
+		want string
 	}{
-		{
-			name: "explicit_max_tokens_and_variant",
-			cfg: &Config{
-				APIKey:           "test-api-key",
-				DefaultMaxTokens: 2048,
-				Variant:          VariantAnthropicAPI,
-			},
-			wantMaxTokens: 2048,
-			wantVariant:   VariantAnthropicAPI,
-		},
-		{
-			name: "default_max_tokens_is_safe_for_non_streaming",
-			cfg: &Config{
-				APIKey:  "test-api-key",
-				Variant: VariantAnthropicAPI,
-			},
-			wantMaxTokens: defaultMaxTokens,
-			wantVariant:   VariantAnthropicAPI,
-		},
+		{name: "missing client", cfg: Config{CanonicalModel: "claude-sonnet-5"}, want: "Client must be constructed"},
+		{name: "missing model", cfg: Config{Client: testClient()}, want: "CanonicalModel is required"},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			model, err := NewModel(t.Context(), "claude-sonnet-4-20250514", tt.cfg)
-			if err != nil {
-				t.Fatalf("NewModel() error = %v", err)
-			}
-
-			if model.Name() != "claude-sonnet-4-20250514" {
-				t.Errorf("Name() = %q, want %q", model.Name(), "claude-sonnet-4-20250514")
-			}
-
-			am := model.(*anthropicModel)
-			if am.defaultMaxTokens != tt.wantMaxTokens {
-				t.Errorf("defaultMaxTokens = %d, want %d", am.defaultMaxTokens, tt.wantMaxTokens)
-			}
-			if am.variant != tt.wantVariant {
-				t.Errorf("variant = %q, want %q", am.variant, tt.wantVariant)
+			_, err := NewModel(tt.cfg)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("NewModel() error = %v, want contains %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestNewModel_UsesCanonicalAndRequestModels(t *testing.T) {
+	llm, err := NewModel(Config{
+		Client:         testClient(),
+		CanonicalModel: "claude-sonnet-5",
+		RequestModel:   "anthropic/claude-sonnet-5",
+	}, WithDefaultMaxTokens(2048))
+	if err != nil {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+	if got := llm.Name(); got != "claude-sonnet-5" {
+		t.Fatalf("Name() = %q, want claude-sonnet-5", got)
+	}
+	m := llm.(*anthropicModel)
+	if m.wireModel() != "anthropic/claude-sonnet-5" {
+		t.Fatalf("wireModel() = %q", m.wireModel())
+	}
+	if m.defaultMaxTokens != 2048 {
+		t.Fatalf("defaultMaxTokens = %d, want 2048", m.defaultMaxTokens)
 	}
 }
 
 func TestNewModel_DefaultMaxTokensSupportsNonStreaming(t *testing.T) {
-	model, err := NewModel(t.Context(), anthropic.ModelClaudeHaiku4_5, &Config{
-		APIKey:  "test-api-key",
-		Variant: VariantAnthropicAPI,
-	})
-	if err != nil {
-		t.Fatalf("NewModel() error = %v", err)
-	}
-
-	maxTokens := model.(*anthropicModel).defaultMaxTokens
-	if _, err := anthropic.CalculateNonStreamingTimeout(maxTokens, anthropic.ModelClaudeHaiku4_5, nil); err != nil {
-		t.Fatalf("default max_tokens %d is incompatible with non-streaming requests: %v", maxTokens, err)
+	m := mustTestModel(t, "claude-haiku-4-5")
+	if _, err := anthropic.CalculateNonStreamingTimeout(m.defaultMaxTokens, "claude-haiku-4-5", nil); err != nil {
+		t.Fatalf("default max_tokens %d is incompatible with non-streaming requests: %v", m.defaultMaxTokens, err)
 	}
 }
 
-func TestNewModel_GatewayEffortTranslationIsExplicit(t *testing.T) {
-	tests := []struct {
-		name       string
-		newModel   func() (model.LLM, error)
-		wantEffort anthropic.OutputConfigEffort
-	}{
-		{
-			name: "existing constructor leaves gateway translation disabled",
-			newModel: func() (model.LLM, error) {
-				return NewModel(t.Context(), "glm-5.3-flash", &Config{
-					APIKey:  "test-api-key",
-					Variant: VariantAnthropicAPI,
-				})
-			},
-		},
-		{
-			name: "option enables gateway translation",
-			newModel: func() (model.LLM, error) {
-				return NewModelWithOptions(t.Context(), "glm-5.3-flash", &Config{
-					APIKey:  "test-api-key",
-					Variant: VariantAnthropicAPI,
-				}, WithGatewayEffortTranslation())
-			},
-			wantEffort: anthropic.OutputConfigEffortHigh,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			llm, err := tt.newModel()
-			if err != nil {
-				t.Fatalf("creating model: %v", err)
-			}
-			params, err := llm.(*anthropicModel).convertRequest(&model.LLMRequest{
-				Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
-				Config: &genai.GenerateContentConfig{
-					ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
-				},
-			})
-			if err != nil {
-				t.Fatalf("converting request: %v", err)
-			}
-			if params.Thinking.OfAdaptive != nil || params.Thinking.OfEnabled != nil {
-				t.Errorf("non-Claude model received Claude thinking: %+v", params.Thinking)
-			}
-			if params.OutputConfig.Effort != tt.wantEffort {
-				t.Errorf("effort = %q, want %q", params.OutputConfig.Effort, tt.wantEffort)
-			}
-		})
-	}
-}
-
-func TestNewModel_VertexAI_MissingConfig(t *testing.T) {
-	tests := []struct {
-		name      string
-		project   string
-		location  string
-		wantError string
-	}{
-		{"missing_project", "", "us-central1", "VertexProjectID is required"},
-		{"missing_location", "test-project", "", "VertexLocation is required"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("GOOGLE_CLOUD_PROJECT", tt.project)
-			t.Setenv("GOOGLE_CLOUD_LOCATION", tt.location)
-
-			cfg := &Config{Variant: VariantVertexAI}
-			_, err := NewModel(t.Context(), "claude-sonnet-4-20250514", cfg)
-			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
-				t.Fatalf("NewModel() error = %v, want contains %q", err, tt.wantError)
-			}
-		})
-	}
-}
-
-func TestNewModel_RejectsUnknownVariant(t *testing.T) {
-	_, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
-		Variant: "UNKNOWN",
-	})
-	if err == nil || !strings.Contains(err.Error(), `unsupported Anthropic variant "UNKNOWN"`) {
-		t.Fatalf("NewModel() error = %v, want unsupported variant error", err)
-	}
-}
-
-func TestConvertRequest_RequestModelOverride(t *testing.T) {
+func TestReasoningStrategies(t *testing.T) {
 	tests := []struct {
 		name         string
-		requestModel anthropic.Model
-		wantModel    anthropic.Model
+		config       ReasoningConfig
+		request      *genai.ThinkingConfig
+		wantAdaptive bool
+		wantEffort   anthropic.OutputConfigEffort
+		wantDisplay  string
 	}{
 		{
-			name:      "uses canonical model by default",
-			wantModel: anthropic.ModelClaudeSonnet4_6,
+			name:    "disabled ignores request level",
+			config:  ReasoningConfig{Strategy: ReasoningDisabled},
+			request: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
 		},
 		{
-			name:         "uses request model override",
-			requestModel: "provider/claude-sonnet-4.6",
-			wantModel:    "provider/claude-sonnet-4.6",
+			name:         "adaptive uses request effort",
+			config:       ReasoningConfig{Strategy: ReasoningAdaptiveEffort, DefaultLevel: genai.ThinkingLevelMedium},
+			request:      &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow, IncludeThoughts: true},
+			wantAdaptive: true,
+			wantEffort:   anthropic.OutputConfigEffortLow,
+			wantDisplay:  "summarized",
+		},
+		{
+			name:         "adaptive uses route default",
+			config:       ReasoningConfig{Strategy: ReasoningAdaptiveEffort, DefaultLevel: genai.ThinkingLevelMedium},
+			wantAdaptive: true,
+			wantEffort:   anthropic.OutputConfigEffortMedium,
+			wantDisplay:  "omitted",
+		},
+		{
+			name:    "minimal disables adaptive",
+			config:  ReasoningConfig{Strategy: ReasoningAdaptiveEffort, DefaultLevel: genai.ThinkingLevelHigh},
+			request: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMinimal},
+		},
+		{
+			name:    "provider native emits no Anthropic reasoning",
+			config:  ReasoningConfig{Strategy: ReasoningProviderNative, DefaultLevel: genai.ThinkingLevelHigh},
+			request: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow, IncludeThoughts: true},
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
-				APIKey:       "test-api-key",
-				Variant:      VariantAnthropicAPI,
-				RequestModel: tt.requestModel,
-			})
-			if err != nil {
-				t.Fatalf("NewModel() error = %v", err)
+			options := []Option{WithReasoning(tt.config)}
+			if tt.config.Strategy == ReasoningProviderNative {
+				options = append(options, WithVercelGateway(vercel.Config{Projector: vercel.OpenAIModelOptions{}}))
 			}
-			if llm.Name() != string(anthropic.ModelClaudeSonnet4_6) {
-				t.Errorf("Name() = %q, want canonical name %q", llm.Name(), anthropic.ModelClaudeSonnet4_6)
-			}
-
-			params, err := llm.(*anthropicModel).convertRequest(&model.LLMRequest{
-				Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
-			})
+			m := mustTestModel(t, "route-model", options...)
+			params, err := m.convertRequest(testRequest(tt.request))
 			if err != nil {
 				t.Fatalf("convertRequest() error = %v", err)
 			}
-			if params.Model != tt.wantModel {
-				t.Errorf("request model = %q, want %q", params.Model, tt.wantModel)
+			if got := params.Thinking.OfAdaptive != nil; got != tt.wantAdaptive {
+				t.Fatalf("adaptive = %v, want %v", got, tt.wantAdaptive)
 			}
-			if params.Thinking.OfAdaptive == nil {
-				t.Error("expected canonical Sonnet name to retain adaptive thinking defaults")
+			if params.Thinking.OfEnabled != nil {
+				t.Fatalf("unexpected enabled thinking = %+v", params.Thinking.OfEnabled)
+			}
+			if params.OutputConfig.Effort != tt.wantEffort {
+				t.Fatalf("effort = %q, want %q", params.OutputConfig.Effort, tt.wantEffort)
+			}
+			if tt.wantDisplay != "" {
+				raw, err := json.Marshal(params.Thinking)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(raw), `"display":"`+tt.wantDisplay+`"`) {
+					t.Fatalf("thinking = %s, want display %s", raw, tt.wantDisplay)
+				}
 			}
 		})
 	}
 }
 
-func TestNewModel_AnthropicCompatibleEndpointUsesConfiguredRequest(t *testing.T) {
-	type capturedRequest struct {
-		path   string
-		apiKey string
-		model  string
+func TestReasoningRejectsExplicitBudget(t *testing.T) {
+	m := mustTestModel(t, "route-model", WithReasoning(ReasoningConfig{Strategy: ReasoningAdaptiveEffort}))
+	budget := int32(2048)
+	_, err := m.convertRequest(testRequest(&genai.ThinkingConfig{ThinkingBudget: &budget}))
+	if err == nil || !strings.Contains(err.Error(), "ThinkingBudget is not supported") {
+		t.Fatalf("convertRequest() error = %v", err)
 	}
-	captured := make(chan capturedRequest, 1)
+}
 
+func TestProviderNativeRequiresVercelProjector(t *testing.T) {
+	tests := []struct {
+		name    string
+		options []Option
+	}{
+		{
+			name: "missing Vercel config",
+			options: []Option{WithReasoning(ReasoningConfig{
+				Strategy: ReasoningProviderNative,
+			})},
+		},
+		{
+			name: "missing projector",
+			options: []Option{
+				WithReasoning(ReasoningConfig{Strategy: ReasoningProviderNative}),
+				WithVercelGateway(vercel.Config{}),
+			},
+		},
+		{
+			name: "projector on adaptive strategy",
+			options: []Option{
+				WithReasoning(ReasoningConfig{Strategy: ReasoningAdaptiveEffort}),
+				WithVercelGateway(vercel.Config{Projector: vercel.OpenAIModelOptions{}}),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewModel(Config{Client: testClient(), CanonicalModel: "route-model"}, tt.options...)
+			if err == nil {
+				t.Fatal("NewModel() error = nil")
+			}
+		})
+	}
+}
+
+func TestForcedToolUseDropsThinkingAndEffort(t *testing.T) {
+	m := mustTestModel(t, "claude-sonnet-5", WithReasoning(ReasoningConfig{
+		Strategy:     ReasoningAdaptiveEffort,
+		DefaultLevel: genai.ThinkingLevelHigh,
+	}))
+	req := testRequest(&genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh})
+	req.Config.ToolConfig = &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{
+		Mode:                 genai.FunctionCallingConfigModeAny,
+		AllowedFunctionNames: []string{"save"},
+	}}
+	params, err := m.convertRequest(req)
+	if err != nil {
+		t.Fatalf("convertRequest() error = %v", err)
+	}
+	if params.Thinking.OfAdaptive != nil || params.Thinking.OfEnabled != nil || params.OutputConfig.Effort != "" {
+		t.Fatalf("forced tool request kept reasoning: thinking=%+v effort=%q", params.Thinking, params.OutputConfig.Effort)
+	}
+}
+
+func TestVercelGateway_RequestAndResponseMetadata(t *testing.T) {
+	requestBody := make(chan map[string]any, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		var requestBody struct {
-			Model string `json:"model"`
-		}
-		if err := json.Unmarshal(body, &requestBody); err != nil {
+		var decoded map[string]any
+		if err := json.Unmarshal(body, &decoded); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		captured <- capturedRequest{
-			path:   r.URL.Path,
-			apiKey: r.Header.Get("x-api-key"),
-			model:  requestBody.Model,
-		}
+		requestBody <- decoded
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","model":"anthropic/claude-sonnet-4.6","content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}`)
+		_, _ = io.WriteString(w, `{
+			"id":"msg_1","type":"message","role":"assistant","model":"zai/glm-5.3-flash",
+			"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn","stop_sequence":null,
+			"usage":{"input_tokens":4,"output_tokens":2},
+			"providerMetadata":{"gateway":{"cost":"0.0123","generationId":"gen_1","routing":{
+				"originalModelId":"zai/glm-5.3-flash","resolvedProvider":"baseten","canonicalSlug":"zai/glm-5.3-flash",
+				"modelAttemptCount":1,"totalProviderAttemptCount":2
+			}}}
+		}`)
 	}))
-	t.Cleanup(srv.Close)
+	defer srv.Close()
 
-	llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
-		APIKey:       "gateway-key",
-		Variant:      VariantAnthropicAPI,
-		BaseURL:      srv.URL,
-		RequestModel: "provider/claude-sonnet-4.6",
-	})
+	client := anthropic.NewClient(option.WithAPIKey("gateway-key"), option.WithBaseURL(srv.URL))
+	llm, err := NewModel(Config{
+		Client:         client,
+		CanonicalModel: "glm-5.3-flash",
+		RequestModel:   "zai/glm-5.3-flash",
+	},
+		WithReasoning(ReasoningConfig{Strategy: ReasoningProviderNative, DefaultLevel: genai.ThinkingLevelMedium}),
+		WithPromptCaching(PromptCachingConfig{Mode: PromptCacheGatewayAutomatic}),
+		WithVercelGateway(vercel.Config{
+			Routing:   vercel.Routing{Only: []string{"zai", "baseten"}},
+			Projector: vercel.ZAIModelOptions{},
+		}),
+	)
 	if err != nil {
 		t.Fatalf("NewModel() error = %v", err)
 	}
 
-	for _, err := range llm.GenerateContent(t.Context(), &model.LLMRequest{
-		Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
-	}, false) {
+	var response *model.LLMResponse
+	for resp, err := range llm.GenerateContent(t.Context(), testRequest(nil), false) {
+		if err != nil {
+			t.Fatalf("GenerateContent() error = %v", err)
+		}
+		response = resp
+	}
+
+	decoded := <-requestBody
+	if decoded["model"] != "zai/glm-5.3-flash" {
+		t.Fatalf("request model = %v", decoded["model"])
+	}
+	providerOptions := decoded["providerOptions"].(map[string]any)
+	gateway := providerOptions["gateway"].(map[string]any)
+	if gateway["zeroDataRetention"] != true {
+		t.Fatalf("zeroDataRetention = %v, want true", gateway["zeroDataRetention"])
+	}
+	if gateway["caching"] != "auto" {
+		t.Fatalf("caching = %v, want auto", gateway["caching"])
+	}
+	if _, ok := decoded["thinking"]; ok {
+		t.Fatalf("Anthropic thinking = %v, want omitted", decoded["thinking"])
+	}
+	zai := providerOptions["zai"].(map[string]any)
+	if got := zai["reasoningEffort"]; got != "high" {
+		t.Fatalf("Z.AI reasoning effort = %v, want high", got)
+	}
+
+	metadata, ok := vercel.MetadataFromResponse(response)
+	if !ok {
+		t.Fatal("missing typed Vercel metadata")
+	}
+	if metadata.ResolvedProvider != "baseten" || metadata.CostUSD == nil || *metadata.CostUSD != 0.0123 {
+		t.Fatalf("metadata = %+v", metadata)
+	}
+	responseMetadata, ok := ResponseMetadataFromResponse(response)
+	if !ok || responseMetadata.MessageID != "msg_1" {
+		t.Fatalf("Anthropic response metadata = %+v, found=%t", responseMetadata, ok)
+	}
+}
+
+func TestVercelGateway_ProviderNativeReasoningUsesRequestOverrides(t *testing.T) {
+	requestBodies := make(chan map[string]any, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requestBodies <- decoded
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"id":"msg_1","type":"message","role":"assistant","model":"zai/glm-5.3-flash",
+			"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn","stop_sequence":null,
+			"usage":{"input_tokens":4,"output_tokens":2}
+		}`)
+	}))
+	defer srv.Close()
+
+	client := anthropic.NewClient(option.WithAPIKey("gateway-key"), option.WithBaseURL(srv.URL))
+	llm, err := NewModel(Config{
+		Client: client, CanonicalModel: "glm-5.3-flash", RequestModel: "zai/glm-5.3-flash",
+	},
+		WithDefaultMaxTokens(64_000),
+		WithReasoning(ReasoningConfig{Strategy: ReasoningProviderNative, DefaultLevel: genai.ThinkingLevelHigh}),
+		WithVercelGateway(vercel.Config{Projector: vercel.ZAIModelOptions{}}),
+	)
+	if err != nil {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	requests := []*model.LLMRequest{
+		testRequest(&genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow}),
+		testRequest(nil),
+	}
+	requests[0].Config.MaxOutputTokens = 4096
+	requests[1].Config.MaxOutputTokens = 8192
+	for _, request := range requests {
+		for _, err := range llm.GenerateContent(t.Context(), request, false) {
+			if err != nil {
+				t.Fatalf("GenerateContent() error = %v", err)
+			}
+		}
+	}
+
+	assertZAIEffort := func(wantEffort string, wantMaxTokens float64) {
+		t.Helper()
+		decoded := <-requestBodies
+		if got := decoded["max_tokens"]; got != wantMaxTokens {
+			t.Fatalf("max_tokens = %v, want %.0f", got, wantMaxTokens)
+		}
+		if _, ok := decoded["thinking"]; ok {
+			t.Fatalf("Anthropic thinking = %v, want omitted", decoded["thinking"])
+		}
+		if outputConfig, ok := decoded["output_config"].(map[string]any); ok {
+			if _, hasEffort := outputConfig["effort"]; hasEffort {
+				t.Fatalf("Anthropic output_config.effort = %v, want omitted", outputConfig["effort"])
+			}
+		}
+		providerOptions := decoded["providerOptions"].(map[string]any)
+		zai := providerOptions["zai"].(map[string]any)
+		if got := zai["reasoningEffort"]; got != wantEffort {
+			t.Fatalf("Z.AI reasoningEffort = %v, want %q", got, wantEffort)
+		}
+	}
+
+	assertZAIEffort("low", 4096)
+	assertZAIEffort("max", 8192)
+}
+
+func TestVercelGateway_StreamingUsesProviderNativeRequestOptions(t *testing.T) {
+	requestBody := make(chan map[string]any, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requestBody <- decoded
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, successSSE)
+	}))
+	defer srv.Close()
+
+	client := anthropic.NewClient(option.WithAPIKey("gateway-key"), option.WithBaseURL(srv.URL))
+	llm, err := NewModel(Config{
+		Client: client, CanonicalModel: "glm-5.3-flash", RequestModel: "zai/glm-5.3-flash",
+	},
+		WithDefaultMaxTokens(64_000),
+		WithReasoning(ReasoningConfig{Strategy: ReasoningProviderNative, DefaultLevel: genai.ThinkingLevelHigh}),
+		WithVercelGateway(vercel.Config{Projector: vercel.ZAIModelOptions{}}),
+	)
+	if err != nil {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	request := testRequest(&genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow, IncludeThoughts: true})
+	request.Config.MaxOutputTokens = 4096
+	for _, err := range llm.GenerateContent(t.Context(), request, true) {
 		if err != nil {
 			t.Fatalf("GenerateContent() error = %v", err)
 		}
 	}
 
-	got := <-captured
-	if got.path != "/v1/messages" {
-		t.Errorf("request path = %q, want /v1/messages", got.path)
+	decoded := <-requestBody
+	if got := decoded["max_tokens"]; got != float64(4096) {
+		t.Fatalf("max_tokens = %v, want 4096", got)
 	}
-	if got.apiKey != "gateway-key" {
-		t.Errorf("x-api-key = %q, want gateway-key", got.apiKey)
+	if got := decoded["stream"]; got != true {
+		t.Fatalf("stream = %v, want true", got)
 	}
-	if got.model != "provider/claude-sonnet-4.6" {
-		t.Errorf("request model = %q, want %q", got.model, "provider/claude-sonnet-4.6")
+	if _, ok := decoded["thinking"]; ok {
+		t.Fatalf("Anthropic thinking = %v, want omitted", decoded["thinking"])
+	}
+	providerOptions := decoded["providerOptions"].(map[string]any)
+	gateway := providerOptions["gateway"].(map[string]any)
+	if got := gateway["zeroDataRetention"]; got != true {
+		t.Fatalf("zeroDataRetention = %v, want true", got)
+	}
+	zai := providerOptions["zai"].(map[string]any)
+	if got := zai["reasoningEffort"]; got != "low" {
+		t.Fatalf("Z.AI reasoningEffort = %v, want low", got)
+	}
+}
+
+func TestVercelGateway_RetentionAllowedIsExplicit(t *testing.T) {
+	m := mustTestModel(t, "route-model", WithVercelGateway(vercel.Config{DataPolicy: vercel.RetentionAllowed}))
+	options, err := m.vercel.WireProviderOptions(vercel.ProviderOptionsInput{})
+	if err != nil {
+		t.Fatalf("WireProviderOptions() error = %v", err)
+	}
+	gateway := options["gateway"].(map[string]any)
+	if gateway["zeroDataRetention"] != false {
+		t.Fatalf("zeroDataRetention = %v, want false", gateway["zeroDataRetention"])
+	}
+}
+
+func TestPromptCachingModes(t *testing.T) {
+	breakpoint := &CacheBreakpoint{}
+	_, err := NewModel(Config{Client: testClient(), CanonicalModel: "route-model"}, WithPromptCaching(PromptCachingConfig{
+		Mode:  PromptCacheGatewayAutomatic,
+		Tools: breakpoint,
+	}))
+	if err == nil || !strings.Contains(err.Error(), "breakpoints require manual mode") {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	_, err = NewModel(Config{Client: testClient(), CanonicalModel: "route-model"}, WithPromptCaching(PromptCachingConfig{
+		Mode: PromptCacheGatewayAutomatic,
+	}))
+	if err == nil || !strings.Contains(err.Error(), "requires WithVercelGateway") {
+		t.Fatalf("NewModel() error = %v", err)
+	}
+
+	m := mustTestModel(t, "route-model", WithPromptCaching(PromptCachingConfig{
+		Mode: PromptCacheManual,
+		Auto: breakpoint,
+	}))
+	params, err := m.convertRequest(testRequest(nil))
+	if err != nil {
+		t.Fatalf("convertRequest() error = %v", err)
+	}
+	if params.CacheControl.Type == "" {
+		t.Fatal("manual prompt cache breakpoint is missing")
+	}
+}
+
+func TestConvertRequest_SetsStructuredOutput(t *testing.T) {
+	m := mustTestModel(t, "route-model")
+	req := testRequest(nil)
+	req.Config.ResponseSchema = &genai.Schema{
+		Type:       genai.TypeObject,
+		Properties: map[string]*genai.Schema{"answer": {Type: genai.TypeString}},
+		Required:   []string{"answer"},
+	}
+	params, err := m.convertRequest(req)
+	if err != nil {
+		t.Fatalf("convertRequest() error = %v", err)
+	}
+	if params.OutputConfig.Format.Schema == nil {
+		t.Fatal("structured output schema is missing")
 	}
 }
 
 func TestFilterThoughtParts_PreservesProviderState(t *testing.T) {
-	unsigned := &genai.Part{Thought: true, Text: "Vercel Gemini reasoning"}
-	signed := &genai.Part{Thought: true, Text: "signed reasoning", ThoughtSignature: []byte("sig")}
-	redacted := &genai.Part{
-		Thought:      true,
-		Text:         "[thinking redacted]",
-		PartMetadata: map[string]any{"anthropic.redacted_thinking_data": "opaque"},
+	parts := []*genai.Part{
+		{Text: "unsigned", Thought: true},
+		{Text: "signed", Thought: true, ThoughtSignature: []byte("sig")},
+		{Text: "redacted", Thought: true, PartMetadata: map[string]any{"provider": "state"}},
+		{Text: "answer"},
 	}
-	text := &genai.Part{Text: "answer"}
-
-	got := filterThoughtParts([]*genai.Part{unsigned, signed, redacted, text})
-
-	if len(got) != 3 {
-		t.Fatalf("len(got) = %d, want 3", len(got))
-	}
-	if got[0] != signed || got[0].Text != "signed reasoning" {
-		t.Errorf("got[0] = %+v, want signed thinking preserved unchanged", got[0])
-	}
-	if got[1] != redacted {
-		t.Errorf("got[1] = %+v, want redacted provider state preserved", got[1])
-	}
-	if got[2] != text {
-		t.Errorf("got[2] = %+v, want answer text", got[2])
+	got := filterThoughtParts(parts)
+	if len(got) != 3 || got[0].Text != "signed" || got[1].Text != "redacted" || got[2].Text != "answer" {
+		t.Fatalf("filterThoughtParts() = %+v", got)
 	}
 }
 
 func TestFilterThoughtParts_PreservesThoughtOnlyTurn(t *testing.T) {
-	got := filterThoughtParts([]*genai.Part{{
-		Thought: true,
-		Text:    "Vercel Gemini reasoning",
-	}})
-
-	if len(got) != 1 {
-		t.Fatalf("len(got) = %d, want 1", len(got))
-	}
-	if !got[0].Thought || got[0].Text != "" {
-		t.Errorf("got[0] = %+v, want empty thought marker", got[0])
+	got := filterThoughtParts([]*genai.Part{{Text: "hidden", Thought: true}})
+	if len(got) != 1 || !got[0].Thought || got[0].Text != "" {
+		t.Fatalf("filterThoughtParts() = %+v", got)
 	}
 }
 
-func TestGenerateContent_HonoursIncludeThoughts(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","model":"google/gemini-3.6-flash","content":[{"type":"thinking","thinking":"Vercel Gemini reasoning","signature":""},{"type":"text","text":"Hello"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":2}}`)
-	}))
-	t.Cleanup(srv.Close)
-
-	llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
-		APIKey:  "gateway-key",
-		Variant: VariantAnthropicAPI,
-		BaseURL: srv.URL,
-	})
-	if err != nil {
-		t.Fatalf("NewModel() error = %v", err)
-	}
-
-	for _, tc := range []struct {
-		name            string
-		includeThoughts bool
-		wantParts       int
-	}{
-		{name: "hidden", includeThoughts: false, wantParts: 1},
-		{name: "included", includeThoughts: true, wantParts: 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			req := &model.LLMRequest{Config: &genai.GenerateContentConfig{
-				ThinkingConfig: &genai.ThinkingConfig{IncludeThoughts: tc.includeThoughts},
-			}}
-
-			var got *model.LLMResponse
-			for resp, err := range llm.GenerateContent(t.Context(), req, false) {
-				if err != nil {
-					t.Fatalf("GenerateContent() error = %v", err)
-				}
-				got = resp
-			}
-
-			if got == nil || got.Content == nil {
-				t.Fatal("GenerateContent() returned no content")
-			}
-			if len(got.Content.Parts) != tc.wantParts {
-				t.Fatalf("len(got.Content.Parts) = %d, want %d", len(got.Content.Parts), tc.wantParts)
-			}
-			if got.Content.Parts[len(got.Content.Parts)-1].Text != "Hello" {
-				t.Errorf("last part = %+v, want answer text", got.Content.Parts[len(got.Content.Parts)-1])
-			}
-		})
-	}
+func testClient(opts ...option.RequestOption) anthropic.Client {
+	return anthropic.NewClient(append([]option.RequestOption{option.WithAPIKey("test-key")}, opts...)...)
 }
 
-func TestGenerateContent_PreservesHiddenThoughtOnlyTurn(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","model":"google/gemini-3.7-flash","content":[{"type":"thinking","thinking":"Vercel Gemini reasoning","signature":""}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":2}}`)
-	}))
-	t.Cleanup(srv.Close)
-
-	llm, err := NewModel(t.Context(), anthropic.ModelClaudeSonnet4_6, &Config{
-		APIKey:  "gateway-key",
-		Variant: VariantAnthropicAPI,
-		BaseURL: srv.URL,
-	})
-	if err != nil {
-		t.Fatalf("NewModel() error = %v", err)
-	}
-
-	var got *model.LLMResponse
-	for resp, err := range llm.GenerateContent(t.Context(), &model.LLMRequest{}, false) {
-		if err != nil {
-			t.Fatalf("GenerateContent() error = %v", err)
-		}
-		got = resp
-	}
-
-	if got == nil || got.Content == nil || len(got.Content.Parts) != 1 {
-		t.Fatalf("GenerateContent() = %+v, want one content part", got)
-	}
-	if part := got.Content.Parts[0]; !part.Thought || part.Text != "" {
-		t.Errorf("part = %+v, want empty thought marker", part)
-	}
-}
-
-func TestConvertRequest_VertexAI_SetsOutputConfig(t *testing.T) {
-	m := &anthropicModel{
-		canonicalModel:   "claude-haiku-4-5-20251001",
-		variant:          VariantVertexAI,
-		defaultMaxTokens: testMaxTokens,
-	}
-
-	schema := &genai.Schema{
-		Type:     genai.TypeObject,
-		Required: []string{"name"},
-		Properties: map[string]*genai.Schema{
-			"name": {Type: genai.TypeString},
-		},
-	}
-
-	req := &model.LLMRequest{
-		Contents: []*genai.Content{
-			genai.NewContentFromText("Hello", "user"),
-		},
-		Config: &genai.GenerateContentConfig{
-			ResponseSchema: schema,
-		},
-	}
-
-	params, err := m.convertRequest(req)
-	if err != nil {
-		t.Fatalf("convertRequest() error = %v", err)
-	}
-
-	// Structured outputs are GA on Vertex AI, so OutputConfig must be set.
-	if params.OutputConfig.Format.Schema == nil {
-		t.Error("expected OutputConfig to be set for Vertex AI, but it was empty")
-	}
-}
-
-func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse(t *testing.T) {
-	m := &anthropicModel{
-		canonicalModel:   "claude-haiku-4-5-20251001",
-		variant:          VariantVertexAI,
-		defaultMaxTokens: testMaxTokens,
-	}
-
-	// Top-level object, a nested object property, and an array of objects —
-	// every object node must get additionalProperties:false.
-	schema := &genai.Schema{
-		Type:     genai.TypeObject,
-		Required: []string{"person"},
-		Properties: map[string]*genai.Schema{
-			"person": {
-				Type: genai.TypeObject,
-				Properties: map[string]*genai.Schema{
-					"name": {Type: genai.TypeString},
-				},
-			},
-			"tags": {
-				Type: genai.TypeArray,
-				Items: &genai.Schema{
-					Type: genai.TypeObject,
-					Properties: map[string]*genai.Schema{
-						"label": {Type: genai.TypeString},
-					},
-				},
-			},
-		},
-	}
-
-	req := &model.LLMRequest{
-		Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
-		Config:   &genai.GenerateContentConfig{ResponseSchema: schema},
-	}
-
-	params, err := m.convertRequest(req)
-	if err != nil {
-		t.Fatalf("convertRequest() error = %v", err)
-	}
-
-	root := params.OutputConfig.Format.Schema
-	if root == nil {
-		t.Fatal("expected OutputConfig schema to be set")
-	}
-
-	assertAdditionalPropertiesFalse(t, root, "root")
-
-	props, _ := root["properties"].(map[string]any)
-	person, _ := props["person"].(map[string]any)
-	assertAdditionalPropertiesFalse(t, person, "person")
-
-	tags, _ := props["tags"].(map[string]any)
-	items, _ := tags["items"].(map[string]any)
-	assertAdditionalPropertiesFalse(t, items, "tags.items")
-}
-
-func TestConvertRequest_VertexAI_TransformsUnsupportedSchemaConstraints(t *testing.T) {
-	m := &anthropicModel{
-		canonicalModel:   "claude-haiku-4-5-20251001",
-		variant:          VariantVertexAI,
-		defaultMaxTokens: testMaxTokens,
-	}
-
-	minimum, maximum := 1.0, 100.0
-	minLength, maxLength := int64(2), int64(50)
-	minItems, maxItems := int64(2), int64(20)
-	schema := &genai.Schema{
-		Type: genai.TypeObject,
-		Properties: map[string]*genai.Schema{
-			"score": {
-				Type:        genai.TypeNumber,
-				Description: "A score",
-				Minimum:     &minimum,
-				Maximum:     &maximum,
-			},
-			"name": {
-				Type:      genai.TypeString,
-				MinLength: &minLength,
-				MaxLength: &maxLength,
-			},
-			"tags": {
-				Type:     genai.TypeArray,
-				Items:    &genai.Schema{Type: genai.TypeString},
-				MinItems: &minItems,
-				MaxItems: &maxItems,
-			},
-		},
-	}
-
-	req := &model.LLMRequest{
-		Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
-		Config:   &genai.GenerateContentConfig{ResponseSchema: schema},
-	}
-
-	params, err := m.convertRequest(req)
-	if err != nil {
-		t.Fatalf("convertRequest() error = %v", err)
-	}
-
-	root := params.OutputConfig.Format.Schema
-	properties, ok := root["properties"].(map[string]any)
-	if !ok {
-		t.Fatalf("properties = %T, want map[string]any", root["properties"])
-	}
-
-	score, ok := properties["score"].(map[string]any)
-	if !ok {
-		t.Fatalf("score = %T, want map[string]any", properties["score"])
-	}
-	for _, unsupported := range []string{"minimum", "maximum"} {
-		if _, exists := score[unsupported]; exists {
-			t.Errorf("score.%s should be removed from the Anthropic schema", unsupported)
-		}
-	}
-	if description, _ := score["description"].(string); !strings.Contains(description, "maximum: 100") || !strings.Contains(description, "minimum: 1") {
-		t.Errorf("score.description = %q, want preserved minimum and maximum guidance", description)
-	}
-
-	name, ok := properties["name"].(map[string]any)
-	if !ok {
-		t.Fatalf("name = %T, want map[string]any", properties["name"])
-	}
-	for _, unsupported := range []string{"minLength", "maxLength"} {
-		if _, exists := name[unsupported]; exists {
-			t.Errorf("name.%s should be removed from the Anthropic schema", unsupported)
-		}
-	}
-	if description, _ := name["description"].(string); !strings.Contains(description, "maxLength: 50") || !strings.Contains(description, "minLength: 2") {
-		t.Errorf("name.description = %q, want preserved length guidance", description)
-	}
-
-	tags, ok := properties["tags"].(map[string]any)
-	if !ok {
-		t.Fatalf("tags = %T, want map[string]any", properties["tags"])
-	}
-	for _, unsupported := range []string{"minItems", "maxItems"} {
-		if _, exists := tags[unsupported]; exists {
-			t.Errorf("tags.%s should be removed from the Anthropic schema", unsupported)
-		}
-	}
-	if description, _ := tags["description"].(string); !strings.Contains(description, "maxItems: 20") || !strings.Contains(description, "minItems: 2") {
-		t.Errorf("tags.description = %q, want preserved item-count guidance", description)
-	}
-}
-
-func assertAdditionalPropertiesFalse(t *testing.T, schema map[string]any, label string) {
+func mustTestModel(t *testing.T, canonical anthropic.Model, options ...Option) *anthropicModel {
 	t.Helper()
-	if schema == nil {
-		t.Fatalf("%s: schema missing", label)
+	llm, err := NewModel(Config{Client: testClient(), CanonicalModel: canonical}, options...)
+	if err != nil {
+		t.Fatalf("NewModel() error = %v", err)
 	}
-	v, ok := schema["additionalProperties"]
-	if !ok {
-		t.Errorf("%s: additionalProperties not set (Anthropic structured outputs require it to be false)", label)
-		return
-	}
-	if b, isBool := v.(bool); !isBool || b {
-		t.Errorf("%s: additionalProperties = %v, want false", label, v)
-	}
+	return llm.(*anthropicModel)
 }
 
-func TestConvertRequest_OutputConfig_EnforcesAdditionalPropertiesFalse_AnyOf(t *testing.T) {
-	m := &anthropicModel{
-		canonicalModel:   "claude-haiku-4-5-20251001",
-		variant:          VariantVertexAI,
-		defaultMaxTokens: testMaxTokens,
-	}
-
-	// An object branch inside anyOf. SchemaToMap stores anyOf as
-	// []map[string]any, so the enforcement walk must recurse into it.
-	schema := &genai.Schema{
-		Type: genai.TypeObject,
-		Properties: map[string]*genai.Schema{
-			"choice": {
-				AnyOf: []*genai.Schema{
-					{
-						Type:       genai.TypeObject,
-						Properties: map[string]*genai.Schema{"name": {Type: genai.TypeString}},
-					},
-					{Type: genai.TypeString},
-				},
-			},
-		},
-	}
-
-	req := &model.LLMRequest{
+func testRequest(thinking *genai.ThinkingConfig) *model.LLMRequest {
+	return &model.LLMRequest{
 		Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
-		Config:   &genai.GenerateContentConfig{ResponseSchema: schema},
-	}
-
-	params, err := m.convertRequest(req)
-	if err != nil {
-		t.Fatalf("convertRequest() error = %v", err)
-	}
-
-	root := params.OutputConfig.Format.Schema
-	if root == nil {
-		t.Fatal("expected OutputConfig schema to be set")
-	}
-
-	props, _ := root["properties"].(map[string]any)
-	choice, _ := props["choice"].(map[string]any)
-	anyOf, ok := choice["anyOf"].([]any)
-	if !ok {
-		t.Fatalf("choice.anyOf: want []any, got %T", choice["anyOf"])
-	}
-	objectBranch, ok := anyOf[0].(map[string]any)
-	if !ok {
-		t.Fatalf("choice.anyOf[0]: want map[string]any, got %T", anyOf[0])
-	}
-	// The object branch under anyOf must get additionalProperties:false.
-	assertAdditionalPropertiesFalse(t, objectBranch, "choice.anyOf[0]")
-}
-
-func TestConvertRequest_DirectAPI_SetsOutputConfig(t *testing.T) {
-	m := &anthropicModel{
-		canonicalModel:   "claude-haiku-4-5-20251001",
-		variant:          VariantAnthropicAPI,
-		defaultMaxTokens: testMaxTokens,
-	}
-
-	schema := &genai.Schema{
-		Type:     genai.TypeObject,
-		Required: []string{"name"},
-		Properties: map[string]*genai.Schema{
-			"name": {Type: genai.TypeString},
-		},
-	}
-
-	req := &model.LLMRequest{
-		Contents: []*genai.Content{
-			genai.NewContentFromText("Hello", "user"),
-		},
-		Config: &genai.GenerateContentConfig{
-			ResponseSchema: schema,
-		},
-	}
-
-	params, err := m.convertRequest(req)
-	if err != nil {
-		t.Fatalf("convertRequest() error = %v", err)
-	}
-
-	if params.OutputConfig.Format.Schema == nil {
-		t.Error("expected OutputConfig to be set for direct API, but it was empty")
+		Config:   &genai.GenerateContentConfig{ThinkingConfig: thinking},
 	}
 }
-
-// TestConvertRequest_DefaultsToAdaptiveOnCapableModel guards against the
-// regression spotted by Cursor Bugbot on PR #22: an earlier draft gated
-// the thinking-config converter behind `if req.Config.ThinkingConfig != nil`,
-// which made the converter's nil-handling path (return adaptive defaults
-// for adaptive-capable models) unreachable from production. Unit tests
-// that called the converter directly still passed, masking the integration
-// gap. These cases lock in the contract that nil ThinkingConfig — whether
-// inside a non-nil Config or via a nil Config entirely — produces adaptive
-// thinking on a model that supports it.
-func TestConvertRequest_DefaultsToAdaptiveOnCapableModel(t *testing.T) {
-	cases := []struct {
-		name string
-		req  *model.LLMRequest
-	}{
-		{
-			name: "nil_thinking_config_inside_non_nil_config",
-			req: &model.LLMRequest{
-				Contents: []*genai.Content{
-					genai.NewContentFromText("Hello", "user"),
-				},
-				Config: &genai.GenerateContentConfig{},
-			},
-		},
-		{
-			name: "nil_config",
-			req: &model.LLMRequest{
-				Contents: []*genai.Content{
-					genai.NewContentFromText("Hello", "user"),
-				},
-			},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			m := &anthropicModel{
-				// Adaptive-capable model — unversioned SDK alias.
-				canonicalModel:   "claude-sonnet-4-6",
-				variant:          VariantAnthropicAPI,
-				defaultMaxTokens: testMaxTokens,
-			}
-
-			params, err := m.convertRequest(tc.req)
-			if err != nil {
-				t.Fatalf("convertRequest() error = %v", err)
-			}
-
-			if params.Thinking.OfAdaptive == nil {
-				t.Fatalf("expected adaptive thinking on %s, got Thinking=%+v", m.canonicalModel, params.Thinking)
-			}
-		})
-	}
-}
-
-// TestConvertRequest_NilConfigLeavesThinkingOffOnNonAdaptive locks in the
-// other half of the contract: on a model that doesn't support adaptive
-// thinking (Haiku, older Sonnet/Opus), nil ThinkingConfig keeps thinking
-// off rather than forcing a manual budget. The fall-through path through
-// the converter must return an empty mapping for non-adaptive models.
-func TestConvertRequest_NilConfigLeavesThinkingOffOnNonAdaptive(t *testing.T) {
-	m := &anthropicModel{
-		// Manual-only model — adaptive is not supported.
-		canonicalModel:   "claude-haiku-4-5",
-		variant:          VariantAnthropicAPI,
-		defaultMaxTokens: testMaxTokens,
-	}
-
-	req := &model.LLMRequest{
-		Contents: []*genai.Content{
-			genai.NewContentFromText("Hello", "user"),
-		},
-	}
-
-	params, err := m.convertRequest(req)
-	if err != nil {
-		t.Fatalf("convertRequest() error = %v", err)
-	}
-
-	if params.Thinking.OfAdaptive != nil {
-		t.Errorf("non-adaptive model %s should not default to adaptive thinking, got OfAdaptive=%+v", m.canonicalModel, params.Thinking.OfAdaptive)
-	}
-	if params.Thinking.OfEnabled != nil {
-		t.Errorf("non-adaptive model %s should not default to manual thinking budget, got OfEnabled=%+v", m.canonicalModel, params.Thinking.OfEnabled)
-	}
-}
-
-func TestConvertRequest_GatewayModelUsesEffortWithoutAdaptiveThinking(t *testing.T) {
-	tests := []struct {
-		name       string
-		level      genai.ThinkingLevel
-		wantEffort anthropic.OutputConfigEffort
-	}{
-		{name: "high", level: genai.ThinkingLevelHigh, wantEffort: anthropic.OutputConfigEffortHigh},
-		{name: "low", level: genai.ThinkingLevelLow, wantEffort: anthropic.OutputConfigEffortLow},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := &anthropicModel{
-				canonicalModel:           "glm-5.3-flash",
-				requestModel:             "zai/glm-5.3-flash",
-				variant:                  VariantAnthropicAPI,
-				defaultMaxTokens:         testMaxTokens,
-				gatewayEffortTranslation: true,
-			}
-			req := &model.LLMRequest{
-				Contents: []*genai.Content{genai.NewContentFromText("Hello", "user")},
-				Config: &genai.GenerateContentConfig{
-					ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: tt.level},
-				},
-			}
-
-			params, err := m.convertRequest(req)
-			if err != nil {
-				t.Fatalf("convertRequest() error = %v", err)
-			}
-			if params.OutputConfig.Effort != tt.wantEffort {
-				t.Errorf("OutputConfig.Effort = %q, want %q", params.OutputConfig.Effort, tt.wantEffort)
-			}
-			if params.Thinking.OfAdaptive != nil || params.Thinking.OfEnabled != nil {
-				t.Errorf("expected no Anthropic Thinking config, got %+v", params.Thinking)
-			}
-			if params.Model != "zai/glm-5.3-flash" {
-				t.Errorf("Model = %q, want %q", params.Model, "zai/glm-5.3-flash")
-			}
-		})
-	}
-}
-
-// TestConvertRequest_ForcedToolUseDropsThinking locks in the workaround for
-// Anthropic's "forced tool use cannot be combined with extended thinking"
-// constraint. The combination is easy to land into via the genai shape:
-//
-//   - ToolConfig.FunctionCallingConfig.Mode = ModeAny (with or without an
-//     AllowedFunctionNames whitelist) maps to tool_choice.type "any" or "tool".
-//   - ThinkingConfig.ThinkingLevel ∈ {Low, Medium, High} maps to adaptive
-//     thinking on Sonnet 4.6+ / Opus 4.6+ / Mythos.
-//
-// Sent together, Anthropic may ignore tool_choice and reply with text or
-// thinking blocks — which looks to callers like the model refused to use the
-// tool. The converter drops thinking when tool_choice is forced; this test
-// guards that contract for both the specific-tool ("OfTool") and
-// any-tool ("OfAny") shapes, plus the adaptive and manual thinking variants.
-func TestConvertRequest_ForcedToolUseDropsThinking(t *testing.T) {
-	toolDecl := &genai.Tool{
-		FunctionDeclarations: []*genai.FunctionDeclaration{
-			{
-				Name:        "save_thing",
-				Description: "Save a thing.",
-				Parameters: &genai.Schema{
-					Type:     genai.TypeObject,
-					Required: []string{"id"},
-					Properties: map[string]*genai.Schema{
-						"id": {Type: genai.TypeString},
-					},
-				},
-			},
-		},
-	}
-
-	cases := []struct {
-		name                     string
-		modelName                string // adaptive Claude, manual-only Claude, or gateway model
-		toolConfig               *genai.ToolConfig
-		thinking                 *genai.ThinkingConfig
-		gatewayEffortTranslation bool
-		wantEffort               anthropic.OutputConfigEffort
-	}{
-		{
-			name:      "adaptive_model_specific_tool",
-			modelName: "claude-sonnet-4-6",
-			toolConfig: &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode:                 genai.FunctionCallingConfigModeAny,
-					AllowedFunctionNames: []string{"save_thing"},
-				},
-			},
-			thinking: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
-		},
-		{
-			name:      "adaptive_model_any_tool",
-			modelName: "claude-sonnet-4-6",
-			toolConfig: &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode: genai.FunctionCallingConfigModeAny,
-				},
-			},
-			thinking: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
-		},
-		{
-			name:      "adaptive_model_nil_thinking_config_defaults_to_adaptive",
-			modelName: "claude-sonnet-4-6",
-			toolConfig: &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode:                 genai.FunctionCallingConfigModeAny,
-					AllowedFunctionNames: []string{"save_thing"},
-				},
-			},
-			thinking: nil, // adaptive-capable + nil → adaptive defaults; must still be dropped.
-		},
-		{
-			name:      "manual_model_specific_tool",
-			modelName: "claude-haiku-4-5",
-			toolConfig: &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode:                 genai.FunctionCallingConfigModeAny,
-					AllowedFunctionNames: []string{"save_thing"},
-				},
-			},
-			thinking: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
-		},
-		{
-			name:      "manual_model_explicit_budget",
-			modelName: "claude-haiku-4-5",
-			toolConfig: &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode: genai.FunctionCallingConfigModeAny,
-				},
-			},
-			thinking: &genai.ThinkingConfig{ThinkingBudget: ptrInt32(5000)},
-		},
-		{
-			name:      "gateway_model_keeps_effort",
-			modelName: "glm-5.3-flash",
-			toolConfig: &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode: genai.FunctionCallingConfigModeAny,
-				},
-			},
-			thinking:                 &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
-			gatewayEffortTranslation: true,
-			wantEffort:               anthropic.OutputConfigEffortHigh,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			m := &anthropicModel{
-				canonicalModel:           tc.modelName,
-				variant:                  VariantAnthropicAPI,
-				defaultMaxTokens:         testMaxTokens,
-				gatewayEffortTranslation: tc.gatewayEffortTranslation,
-			}
-
-			req := &model.LLMRequest{
-				Contents: []*genai.Content{
-					genai.NewContentFromText("Hello", "user"),
-				},
-				Config: &genai.GenerateContentConfig{
-					Tools:          []*genai.Tool{toolDecl},
-					ToolConfig:     tc.toolConfig,
-					ThinkingConfig: tc.thinking,
-				},
-			}
-
-			params, err := m.convertRequest(req)
-			if err != nil {
-				t.Fatalf("convertRequest() error = %v", err)
-			}
-
-			if params.Thinking.OfAdaptive != nil || params.Thinking.OfEnabled != nil {
-				t.Errorf("expected Thinking to be cleared under forced tool_choice, got %+v", params.Thinking)
-			}
-			if params.OutputConfig.Effort != tc.wantEffort {
-				t.Errorf("OutputConfig.Effort = %q, want %q", params.OutputConfig.Effort, tc.wantEffort)
-			}
-			if params.ToolChoice.OfAny == nil && params.ToolChoice.OfTool == nil {
-				t.Errorf("expected forced ToolChoice (OfAny or OfTool) to be preserved, got %+v", params.ToolChoice)
-			}
-		})
-	}
-}
-
-// TestConvertRequest_AutoToolUseKeepsThinking ensures the conflict resolution
-// only fires when tool_choice is genuinely forced. ModeAuto, ModeNone, and no
-// ToolConfig at all must all preserve the thinking parameter that the caller
-// (or the model-aware defaults) selected.
-func TestConvertRequest_AutoToolUseKeepsThinking(t *testing.T) {
-	cases := []struct {
-		name       string
-		toolConfig *genai.ToolConfig
-	}{
-		{
-			name: "auto_mode",
-			toolConfig: &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode: genai.FunctionCallingConfigModeAuto,
-				},
-			},
-		},
-		{
-			name: "none_mode",
-			toolConfig: &genai.ToolConfig{
-				FunctionCallingConfig: &genai.FunctionCallingConfig{
-					Mode: genai.FunctionCallingConfigModeNone,
-				},
-			},
-		},
-		{
-			name:       "no_tool_config",
-			toolConfig: nil,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			m := &anthropicModel{
-				canonicalModel:   "claude-sonnet-4-6",
-				variant:          VariantAnthropicAPI,
-				defaultMaxTokens: testMaxTokens,
-			}
-
-			req := &model.LLMRequest{
-				Contents: []*genai.Content{
-					genai.NewContentFromText("Hello", "user"),
-				},
-				Config: &genai.GenerateContentConfig{
-					ToolConfig:     tc.toolConfig,
-					ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
-				},
-			}
-
-			params, err := m.convertRequest(req)
-			if err != nil {
-				t.Fatalf("convertRequest() error = %v", err)
-			}
-
-			if params.Thinking.OfAdaptive == nil {
-				t.Errorf("expected adaptive thinking to be preserved when tool_choice is not forced, got %+v", params.Thinking)
-			}
-		})
-	}
-}
-
-func ptrInt32(v int32) *int32 { return &v }

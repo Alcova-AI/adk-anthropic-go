@@ -20,7 +20,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"google.golang.org/genai"
 
-	"github.com/Alcova-AI/adk-anthropic-go/v2/converters"
+	"github.com/Alcova-AI/adk-anthropic-go/v3/converters"
 )
 
 // OutputInterruptedError reports that the model's output was cut off before

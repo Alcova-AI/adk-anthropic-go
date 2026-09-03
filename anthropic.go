@@ -21,15 +21,14 @@ import (
 	"iter"
 	"math/rand/v2"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/anthropics/anthropic-sdk-go/vertex"
 	"google.golang.org/genai"
 
-	"github.com/Alcova-AI/adk-anthropic-go/v2/converters"
+	"github.com/Alcova-AI/adk-anthropic-go/v3/converters"
+	"github.com/Alcova-AI/adk-anthropic-go/v3/vercel"
 	"google.golang.org/adk/v2/model"
 )
 
@@ -51,141 +50,65 @@ type anthropicModel struct {
 	canonicalModel anthropic.Model
 	// requestModel is the model identifier sent to the API.
 	requestModel     anthropic.Model
-	variant          string
 	defaultMaxTokens int
-	promptCaching    *PromptCachingConfig
-	// gatewayEffortTranslation permits effort-only requests for non-Claude
-	// models on a gateway that explicitly supports that translation.
-	gatewayEffortTranslation bool
+	reasoning        ReasoningConfig
+	promptCaching    PromptCachingConfig
+	vercel           *vercel.Config
 
 	// retrySleep waits between mid-stream overload retries. Overridable so
 	// tests can drop the delay; production always gets sleepWithContext.
 	retrySleep func(ctx context.Context, d time.Duration) error
 }
 
-// NewModel returns [model.LLM], backed by an Anthropic-compatible API.
-//
-// It creates an Anthropic client based on the provided configuration.
-// If Variant is not specified, it checks the ANTHROPIC_USE_VERTEX environment variable.
-//
-// For direct Anthropic API, set APIKey in the config or the ANTHROPIC_API_KEY
-// environment variable.
-//
-// For Vertex AI, set VertexProjectID and VertexLocation in the config or use
-// GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION environment variables.
-//
-// For an Anthropic-compatible API, set BaseURL and APIKey. Set RequestModel
-// when the API expects a different model identifier from the canonical name.
-// Name and capability checks continue to use the canonical model name.
-func NewModel(ctx context.Context, modelName anthropic.Model, cfg *Config) (model.LLM, error) {
-	return NewModelWithOptions(ctx, modelName, cfg)
-}
-
-// NewModelWithOptions returns [model.LLM] with optional, explicitly declared
-// capabilities for Anthropic-compatible endpoints. NewModel remains available
-// as the default constructor with no additional gateway capabilities.
-func NewModelWithOptions(ctx context.Context, modelName anthropic.Model, cfg *Config, options ...ModelOption) (model.LLM, error) {
-	if cfg == nil {
-		cfg = &Config{}
+// NewModel returns an ADK model backed by a caller-owned Anthropic SDK client.
+// The adapter does not discover credentials, select endpoints, or infer gateway
+// capabilities from model names.
+func NewModel(cfg Config, options ...Option) (model.LLM, error) {
+	if len(cfg.Client.Options) == 0 {
+		return nil, fmt.Errorf("Client must be constructed with anthropic.NewClient")
 	}
-	modelOpts := &modelOptions{}
-	for _, option := range options {
-		option(modelOpts)
+	if cfg.CanonicalModel == "" {
+		return nil, fmt.Errorf("CanonicalModel is required")
 	}
-
-	variant := cfg.Variant
-	if variant == "" {
-		variant = GetVariant()
+	modelOpts := &modelOptions{defaultMaxTokens: defaultMaxTokens}
+	for _, apply := range options {
+		if apply == nil {
+			return nil, fmt.Errorf("model option must not be nil")
+		}
+		if err := apply(modelOpts); err != nil {
+			return nil, fmt.Errorf("configure model: %w", err)
+		}
 	}
-
-	var client anthropic.Client
-
-	switch variant {
-	case VariantVertexAI:
-		projectID := cfg.VertexProjectID
-		if projectID == "" {
-			projectID = os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if modelOpts.reasoning.Strategy == ReasoningProviderNative {
+		if modelOpts.vercel == nil || modelOpts.vercel.Projector == nil {
+			return nil, fmt.Errorf("provider-native reasoning requires a Vercel provider-options projector")
 		}
-		if projectID == "" {
-			return nil, fmt.Errorf("VertexProjectID is required for Vertex AI (set GOOGLE_CLOUD_PROJECT)")
-		}
-
-		location := cfg.VertexLocation
-		if location == "" {
-			location = os.Getenv("GOOGLE_CLOUD_LOCATION")
-		}
-		if location == "" {
-			return nil, fmt.Errorf("VertexLocation is required for Vertex AI (set GOOGLE_CLOUD_LOCATION)")
-		}
-
-		client = newVertexClient(ctx, cfg)
-	case VariantAnthropicAPI:
-		client = newAPIClient(cfg)
-	default:
-		return nil, fmt.Errorf("unsupported Anthropic variant %q", variant)
+	} else if modelOpts.vercel != nil && modelOpts.vercel.Projector != nil {
+		return nil, fmt.Errorf("Vercel provider-options projector requires provider-native reasoning")
+	}
+	if modelOpts.promptCaching.Mode == PromptCacheGatewayAutomatic && modelOpts.vercel == nil {
+		return nil, fmt.Errorf("gateway-automatic prompt caching requires WithVercelGateway")
 	}
 
 	// max_tokens precedence: a per-request GenerateContentConfig.MaxOutputTokens
 	// override wins in convertRequest; a deployment-level Config.DefaultMaxTokens
 	// wins here; otherwise use a conservative default that remains valid for
 	// both streaming and non-streaming requests.
-	maxTokens := cfg.DefaultMaxTokens
-	if maxTokens == 0 {
-		maxTokens = defaultMaxTokens
-	}
-
 	requestModel := cfg.RequestModel
 	if requestModel == "" {
-		requestModel = modelName
+		requestModel = cfg.CanonicalModel
 	}
 
 	return &anthropicModel{
-		client:                   client,
-		canonicalModel:           modelName,
-		requestModel:             requestModel,
-		variant:                  variant,
-		defaultMaxTokens:         maxTokens,
-		promptCaching:            cfg.PromptCaching,
-		gatewayEffortTranslation: modelOpts.gatewayEffortTranslation,
-		retrySleep:               sleepWithContext,
+		client:           cfg.Client,
+		canonicalModel:   cfg.CanonicalModel,
+		requestModel:     requestModel,
+		defaultMaxTokens: modelOpts.defaultMaxTokens,
+		reasoning:        modelOpts.reasoning,
+		promptCaching:    modelOpts.promptCaching,
+		vercel:           modelOpts.vercel,
+		retrySleep:       sleepWithContext,
 	}, nil
-}
-
-// newAPIClient creates a client for the direct Anthropic API.
-func newAPIClient(cfg *Config) anthropic.Client {
-	opts := []option.RequestOption{}
-
-	apiKey := cfg.APIKey
-	if apiKey == "" {
-		apiKey = os.Getenv("ANTHROPIC_API_KEY")
-	}
-	if apiKey != "" {
-		opts = append(opts, option.WithAPIKey(apiKey))
-	}
-
-	if cfg.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
-	}
-
-	return anthropic.NewClient(opts...)
-}
-
-// newVertexClient creates a client for Anthropic via Vertex AI.
-// Note: The caller must validate that projectID and region are set before calling this.
-func newVertexClient(ctx context.Context, cfg *Config) anthropic.Client {
-	projectID := cfg.VertexProjectID
-	if projectID == "" {
-		projectID = os.Getenv("GOOGLE_CLOUD_PROJECT")
-	}
-
-	location := cfg.VertexLocation
-	if location == "" {
-		location = os.Getenv("GOOGLE_CLOUD_LOCATION")
-	}
-
-	return anthropic.NewClient(
-		vertex.WithGoogleAuth(ctx, location, projectID),
-	)
 }
 
 // Name returns the model name.
@@ -221,7 +144,11 @@ func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*
 		return nil, fmt.Errorf("failed to convert request: %w", err)
 	}
 
-	msg, err := m.client.Messages.New(ctx, params)
+	requestOptions, err := m.requestOptions(req, params.MaxTokens)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert request options: %w", err)
+	}
+	msg, err := m.client.Messages.New(ctx, params, requestOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call model: %w", err)
 	}
@@ -231,6 +158,8 @@ func (m *anthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*
 		return nil, fmt.Errorf("failed to convert response: %w", err)
 	}
 	filterResponseThoughts(resp, requestIncludesThoughts(req))
+	attachAnthropicResponseMetadata(resp, msg)
+	m.attachVercelResponseMetadata(resp, msg.RawJSON())
 
 	return resp, nil
 }
@@ -279,6 +208,11 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 			yield(nil, fmt.Errorf("failed to convert request: %w", err))
 			return
 		}
+		requestOptions, err := m.requestOptions(req, params.MaxTokens)
+		if err != nil {
+			yield(nil, fmt.Errorf("failed to convert request options: %w", err))
+			return
+		}
 
 		// Retry mid-stream overloads, but only while nothing has been yielded:
 		// once a delta has reached the consumer, a retry would replay content
@@ -288,7 +222,7 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 		// to callers and carries no continuation semantics.
 		includeThoughts := requestIncludesThoughts(req)
 		for attempt := 1; ; attempt++ {
-			streamErr := m.streamOnce(ctx, params, includeThoughts, yield)
+			streamErr := m.streamOnce(ctx, params, requestOptions, includeThoughts, yield)
 			if streamErr == nil {
 				return
 			}
@@ -319,10 +253,11 @@ func (m *anthropicModel) generateStream(ctx context.Context, req *model.LLMReque
 func (m *anthropicModel) streamOnce(
 	ctx context.Context,
 	params anthropic.MessageNewParams,
+	requestOptions []option.RequestOption,
 	includeThoughts bool,
 	yield func(*model.LLMResponse, error) bool,
 ) error {
-	stream := m.client.Messages.NewStreaming(ctx, params)
+	stream := m.client.Messages.NewStreaming(ctx, params, requestOptions...)
 	// Next() leaves the response body open on the SSE error-event and
 	// consumer-stop paths; without this, each retried attempt would leak its
 	// predecessor's connection. Close is nil-safe when the request itself
@@ -330,6 +265,8 @@ func (m *anthropicModel) streamOnce(
 	defer stream.Close()
 
 	message := anthropic.Message{}
+	var gatewayMetadata vercel.Metadata
+	hasGatewayMetadata := false
 
 	// True once any delta has been yielded — the point of no return for
 	// retries.
@@ -337,6 +274,10 @@ func (m *anthropicModel) streamOnce(
 
 	for stream.Next() {
 		event := stream.Current()
+		if metadata, ok := vercel.ParseMetadata(event.RawJSON()); ok {
+			gatewayMetadata = metadata
+			hasGatewayMetadata = true
+		}
 
 		// Accumulate the message. A failure here is almost always the
 		// SDK's message_stop re-marshal choking on a tool call whose input
@@ -404,6 +345,12 @@ func (m *anthropicModel) streamOnce(
 		return nil
 	}
 	filterResponseThoughts(finalResp, includeThoughts)
+	attachAnthropicResponseMetadata(finalResp, &message)
+	if hasGatewayMetadata {
+		m.attachParsedResponseMetadata(finalResp, gatewayMetadata)
+	} else {
+		m.attachVercelResponseMetadata(finalResp, message.RawJSON())
+	}
 	finalResp.TurnComplete = true
 	yield(finalResp, nil)
 	return nil
@@ -538,23 +485,15 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 		}
 	}
 
-	// Thinking config — call the converter unconditionally so its
-	// nil-handling actually fires in production. The converter returns
-	// adaptive defaults on adaptive-capable models when ThinkingConfig is
-	// nil; gating this on a nil guard made that path unreachable, and the
-	// PR's "nil config defaults to adaptive on Sonnet 4.6+/Opus 4.6+" claim
-	// silently failed. Two nil shapes reach here:
-	//   - req.Config == nil (no config object at all)
-	//   - req.Config != nil but req.Config.ThinkingConfig == nil
-	// Both should produce model-aware defaults, which ThinkingConfigToAnthropic
-	// already handles when passed a nil pointer.
+	// The route selects an explicit reasoning strategy. The request can change
+	// only the genai level and whether summarized thoughts are returned.
 	var thinkingCfg *genai.ThinkingConfig
 	if req.Config != nil {
 		thinkingCfg = req.Config.ThinkingConfig
 	}
-	mapping := converters.ThinkingConfigToAnthropic(thinkingCfg, m.canonicalModel)
-	if m.gatewayEffortTranslation {
-		mapping = converters.ThinkingConfigToAnthropicWithGatewayEffortTranslation(thinkingCfg, m.canonicalModel)
+	mapping, err := m.reasoning.mapThinking(thinkingCfg)
+	if err != nil {
+		return anthropic.MessageNewParams{}, err
 	}
 	params.Thinking = mapping.Thinking
 	if mapping.Effort != "" {
@@ -578,11 +517,56 @@ func (m *anthropicModel) convertRequest(req *model.LLMRequest) (anthropic.Messag
 		}
 	}
 
-	if m.promptCaching != nil {
-		applyCacheBreakpoints(&params, m.promptCaching)
+	if m.promptCaching.Mode == PromptCacheManual {
+		applyCacheBreakpoints(&params, &m.promptCaching)
 	}
 
 	return params, nil
+}
+
+func (m *anthropicModel) requestOptions(req *model.LLMRequest, maxOutputTokens int64) ([]option.RequestOption, error) {
+	if m.vercel == nil {
+		return nil, nil
+	}
+	var thinkingCfg *genai.ThinkingConfig
+	if req != nil && req.Config != nil {
+		thinkingCfg = req.Config.ThinkingConfig
+	}
+	resolved, err := m.reasoning.resolve(thinkingCfg)
+	if err != nil {
+		return nil, err
+	}
+	providerOptions, err := m.vercel.WireProviderOptions(vercel.ProviderOptionsInput{
+		ThinkingLevel:           resolved.ThinkingLevel,
+		IncludeThoughts:         resolved.IncludeThoughts,
+		MaxOutputTokens:         maxOutputTokens,
+		GatewayAutomaticCaching: m.promptCaching.Mode == PromptCacheGatewayAutomatic,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return []option.RequestOption{option.WithJSONSet("providerOptions", providerOptions)}, nil
+}
+
+func (m *anthropicModel) attachVercelResponseMetadata(resp *model.LLMResponse, rawJSON string) {
+	if m.vercel == nil || resp == nil {
+		return
+	}
+	metadata, ok := vercel.ParseMetadata(rawJSON)
+	if !ok {
+		return
+	}
+	m.attachParsedResponseMetadata(resp, metadata)
+}
+
+func (m *anthropicModel) attachParsedResponseMetadata(resp *model.LLMResponse, metadata vercel.Metadata) {
+	if m.vercel == nil || resp == nil {
+		return
+	}
+	if resp.CustomMetadata == nil {
+		resp.CustomMetadata = make(map[string]any)
+	}
+	resp.CustomMetadata[vercel.MetadataKey] = metadata
 }
 
 // maybeAppendUserContent ensures the conversation ends with a user message.

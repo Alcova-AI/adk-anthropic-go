@@ -14,95 +14,115 @@
 
 package adkanthropic
 
-import "github.com/anthropics/anthropic-sdk-go"
+import (
+	"fmt"
 
-// CacheBreakpoint configures a single cache control breakpoint.
-type CacheBreakpoint struct {
-	// TTL controls the cache time-to-live for this breakpoint.
-	// Leave empty for the server default (5 minutes), or set to
-	// anthropic.CacheControlEphemeralTTLTTL1h for 1-hour caching.
-	//
-	// Cost: 5m writes cost 1.25x base input; 1h writes cost 2x base input.
-	// All cache reads cost 0.1x base input regardless of TTL.
-	TTL anthropic.CacheControlEphemeralTTL
+	"github.com/anthropics/anthropic-sdk-go"
+	"google.golang.org/genai"
+
+	"github.com/Alcova-AI/adk-anthropic-go/v3/vercel"
+)
+
+// Config contains the transport client and model identities used by the
+// adapter. The caller owns authentication, endpoint selection, and the HTTP
+// client by constructing Client with the Anthropic SDK.
+type Config struct {
+	Client anthropic.Client
+
+	// CanonicalModel is exposed through Name and identifies model capabilities.
+	CanonicalModel anthropic.Model
+
+	// RequestModel is sent on the wire. Leave it empty to use CanonicalModel.
+	// This is useful for gateways that require provider-qualified model IDs.
+	RequestModel anthropic.Model
 }
 
-// PromptCachingConfig enables Anthropic prompt caching when provided.
-// Each field controls a specific cache breakpoint position. All are
-// independently optional — set only the breakpoints you need.
-//
-// Anthropic evaluates cache prefixes in order: tools → system → messages.
-// When mixing TTLs, longer TTLs must appear before shorter ones in this order.
-// Maximum 4 explicit breakpoints per request (auto does not count).
-//
-// See: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
-type PromptCachingConfig struct {
-	Auto                *CacheBreakpoint
-	SystemInstruction   *CacheBreakpoint
-	Tools               *CacheBreakpoint
-	ConversationHistory *CacheBreakpoint
-}
-
-// ModelOption configures optional model behaviour without expanding Config's
-// public struct shape.
-type ModelOption func(*modelOptions)
+// Option configures model-route behaviour.
+type Option func(*modelOptions) error
 
 type modelOptions struct {
-	gatewayEffortTranslation bool
+	defaultMaxTokens int
+	reasoning        ReasoningConfig
+	promptCaching    PromptCachingConfig
+	vercel           *vercel.Config
 }
 
-// WithGatewayEffortTranslation enables output_config.effort for non-Claude
-// models when an Anthropic-compatible gateway translates Anthropic effort
-// levels into the upstream model's native reasoning setting. It does not
-// change Claude thinking behaviour.
-func WithGatewayEffortTranslation() ModelOption {
-	return func(opts *modelOptions) {
-		opts.gatewayEffortTranslation = true
+// WithDefaultMaxTokens sets the route default for max_tokens. A request-level
+// GenerateContentConfig.MaxOutputTokens value still takes precedence.
+func WithDefaultMaxTokens(tokens int) Option {
+	return func(opts *modelOptions) error {
+		if tokens <= 0 {
+			return fmt.Errorf("default max tokens must be positive")
+		}
+		opts.defaultMaxTokens = tokens
+		return nil
 	}
 }
 
-// Config holds configuration for creating an Anthropic model.
-type Config struct {
-	// APIKey authenticates requests to the direct or Anthropic-compatible API.
-	// If not provided, it will be read from the ANTHROPIC_API_KEY environment variable.
-	// This is only used when Variant is VariantAnthropicAPI.
-	APIKey string
+// WithReasoning selects the explicit wire strategy for genai thinking levels.
+// The adapter never infers this strategy from a model name or endpoint.
+func WithReasoning(cfg ReasoningConfig) Option {
+	return func(opts *modelOptions) error {
+		if err := cfg.validate(); err != nil {
+			return err
+		}
+		opts.reasoning = cfg
+		return nil
+	}
+}
 
-	// VertexProjectID is the Google Cloud project ID for Vertex AI access.
-	// If not provided, it will be read from the GOOGLE_CLOUD_PROJECT environment variable.
-	// This is only used when Variant is VariantVertexAI.
-	VertexProjectID string
+// WithPromptCaching selects how cache controls are applied for this route.
+func WithPromptCaching(cfg PromptCachingConfig) Option {
+	return func(opts *modelOptions) error {
+		if err := cfg.validate(); err != nil {
+			return err
+		}
+		opts.promptCaching = cfg
+		return nil
+	}
+}
 
-	// VertexLocation is the Google Cloud location for Vertex AI access.
-	// If not provided, it will be read from the GOOGLE_CLOUD_LOCATION environment variable.
-	// Common locations include "us-central1", "us-east5", "europe-west1", and "global".
-	// This is only used when Variant is VariantVertexAI.
-	VertexLocation string
+// WithVercelGateway adds typed Vercel routing and data-policy options. The zero
+// value of vercel.Config requires zero-data-retention routing.
+func WithVercelGateway(cfg vercel.Config) Option {
+	return func(opts *modelOptions) error {
+		if err := cfg.Validate(); err != nil {
+			return err
+		}
+		cfg = cloneVercelConfig(cfg)
+		opts.vercel = &cfg
+		return nil
+	}
+}
 
-	// Variant determines which backend to use for API calls.
-	// Valid values are VariantAnthropicAPI and VariantVertexAI.
-	// If empty, the variant is determined from the ANTHROPIC_USE_VERTEX environment variable.
-	Variant string
+func cloneVercelConfig(cfg vercel.Config) vercel.Config {
+	cfg.Routing.Only = append([]string(nil), cfg.Routing.Only...)
+	cfg.Routing.Order = append([]string(nil), cfg.Routing.Order...)
+	if cfg.ProviderOptions == nil {
+		return cfg
+	}
+	providerOptions := make(map[string]map[string]any, len(cfg.ProviderOptions))
+	for namespace, values := range cfg.ProviderOptions {
+		copyValues := make(map[string]any, len(values))
+		for key, value := range values {
+			copyValues[key] = value
+		}
+		providerOptions[namespace] = copyValues
+	}
+	cfg.ProviderOptions = providerOptions
+	return cfg
+}
 
-	// DefaultMaxTokens is the default maximum number of tokens to generate.
-	// Anthropic requires max_tokens to be explicitly set for all requests.
-	// If not provided, it defaults to 16384 so both streaming and non-streaming
-	// requests remain valid. Callers that intentionally stream large outputs
-	// should set a larger deployment-level value or use the per-request
-	// GenerateContentConfig.MaxOutputTokens override.
-	DefaultMaxTokens int
-
-	// BaseURL overrides the direct Anthropic API endpoint. This supports proxies
-	// and Anthropic-compatible APIs. It is ignored for Vertex AI.
-	BaseURL string
-
-	// RequestModel overrides the model identifier sent to the API. This lets a
-	// caller retain the canonical model name for Name and capability checks while
-	// using a provider-qualified identifier on an Anthropic-compatible API.
-	// When empty, the model passed to NewModel is sent unchanged.
-	RequestModel anthropic.Model
-
-	// PromptCaching configures optional prompt caching breakpoints.
-	// When nil (the default), no cache control is applied.
-	PromptCaching *PromptCachingConfig
+func validThinkingLevel(level genai.ThinkingLevel) bool {
+	switch level {
+	case "",
+		genai.ThinkingLevelUnspecified,
+		genai.ThinkingLevelMinimal,
+		genai.ThinkingLevelLow,
+		genai.ThinkingLevelMedium,
+		genai.ThinkingLevelHigh:
+		return true
+	default:
+		return false
+	}
 }
