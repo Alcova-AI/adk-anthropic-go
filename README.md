@@ -184,6 +184,8 @@ Use `WithPromptCaching` to select one cache policy:
 - `PromptCacheGatewayAutomatic` lets Vercel AI Gateway manage breakpoints and requires `WithVercelGateway`.
 - `PromptCacheManual` applies the configured Anthropic breakpoints.
 
+As of 3 September 2026, [Vercel automatic caching](https://vercel.com/docs/ai-gateway/models-and-providers/automatic-caching) adds explicit cache breakpoints for Anthropic models routed directly or through Vertex AI or Amazon Bedrock, and for MiniMax. OpenAI, Google, and DeepSeek use implicit caching, so Vercel does not modify those requests.
+
 Manual example:
 
 ```go
