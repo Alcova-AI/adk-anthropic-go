@@ -12,90 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package adkanthropic implements the [model.LLM] interface for Anthropic Claude models
-// for use with Google's Agent Development Kit (ADK).
+// Package adkanthropic implements ADK's model.LLM interface on top of the
+// Anthropic Messages API.
 //
-// This package provides support for the direct Anthropic API, Anthropic models
-// via Google Cloud Vertex AI, and Anthropic-compatible APIs.
+// The caller constructs the Anthropic SDK client, so the same adapter can use
+// the direct Anthropic API, Anthropic on Vertex AI, or a compatible gateway
+// without the adapter owning credentials or endpoint policy. Model routes also
+// select explicit reasoning and prompt-cache strategies instead of relying on
+// model-name or endpoint inference.
 //
-// # Installation
-//
-//	go get github.com/Alcova-AI/adk-anthropic-go/v2
-//
-// # Basic Usage
-//
-// To use the direct Anthropic API:
-//
-//	import (
-//		adkanthropic "github.com/Alcova-AI/adk-anthropic-go/v2"
-//		"github.com/anthropics/anthropic-sdk-go"
-//	)
-//
-//	model, err := adkanthropic.NewModel(ctx, anthropic.ModelClaudeSonnet4_20250514, &adkanthropic.Config{
-//		APIKey: os.Getenv("ANTHROPIC_API_KEY"),
-//	})
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//
-//	agent, err := llmagent.New(llmagent.Config{
-//		Name:  "my_agent",
-//		Model: model,
-//		// ... other config
-//	})
-//
-// # Vertex AI Usage
-//
-// To use Anthropic models via Vertex AI:
-//
-//	model, err := adkanthropic.NewModel(ctx, "claude-sonnet-4@20250514", &adkanthropic.Config{
-//		Variant:         adkanthropic.VariantVertexAI,
-//		VertexProjectID:  os.Getenv("GOOGLE_CLOUD_PROJECT"),
-//		VertexLocation:   os.Getenv("GOOGLE_CLOUD_LOCATION"),
-//	})
-//
-// Alternatively, set the ANTHROPIC_USE_VERTEX environment variable to "1" or "true"
-// to automatically use Vertex AI without specifying the variant in code.
-//
-// # Anthropic-Compatible API Usage
-//
-// To use an Anthropic-compatible API while retaining the canonical model name:
-//
-//	model, err := adkanthropic.NewModel(ctx, anthropic.ModelClaudeSonnet4_6, &adkanthropic.Config{
-//		APIKey:       os.Getenv("GATEWAY_API_KEY"),
-//		BaseURL:      "https://gateway.example.com",
-//		RequestModel: "provider/claude-sonnet-4.6",
-//	})
-//
-// The adapter uses RequestModel only for API requests. Name and capability
-// checks continue to use the canonical model passed to NewModel.
-//
-// # Supported Models
-//
-// The package supports all Anthropic Claude models, including:
-//   - claude-sonnet-4-5 / claude-sonnet-4-5-20250929 (Claude Sonnet 4.5)
-//   - claude-opus-4-5 / claude-opus-4-5-20251101 (Claude Opus 4.5)
-//   - claude-sonnet-4-0 / claude-sonnet-4-20250514 (Claude Sonnet 4)
-//   - claude-opus-4-0 / claude-opus-4-20250514 (Claude Opus 4)
-//   - claude-opus-4-1-20250805 (Claude Opus 4.1)
-//   - claude-haiku-4-5 / claude-haiku-4-5-20251001 (Claude Haiku 4.5)
-//   - claude-3-5-haiku-latest / claude-3-5-haiku-20241022 (Claude 3.5 Haiku)
-//
-// Deprecated models (reaching end-of-life):
-//   - claude-3-7-sonnet-latest / claude-3-7-sonnet-20250219 (EOL: Feb 19, 2026)
-//   - claude-3-opus-latest / claude-3-opus-20240229 (EOL: Jan 5, 2026)
-//
-// For Vertex AI, model names follow the format: claude-{variant}-{version}@{date}
-//
-// # Features
-//
-// The package supports:
-//   - Streaming and non-streaming responses
-//   - Tool/function calling
-//   - Extended thinking (mapped to genai.Part with Thought=true)
-//   - Multimodal inputs (text, images)
-//   - PDF document processing (beta)
-//   - System instructions
-//   - Automatic retry of mid-stream overload errors (streaming only, before
-//     any content has been yielded)
+// The optional vercel subpackage adds typed AI Gateway routing, fail-closed
+// zero-data-retention policy, provider options, and response metadata.
 package adkanthropic

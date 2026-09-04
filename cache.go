@@ -14,7 +14,48 @@
 
 package adkanthropic
 
-import "github.com/anthropics/anthropic-sdk-go"
+import (
+	"fmt"
+
+	"github.com/anthropics/anthropic-sdk-go"
+)
+
+// PromptCacheMode selects who manages prompt-cache breakpoints.
+type PromptCacheMode uint8
+
+const (
+	// PromptCacheProviderDefault sends no explicit cache controls.
+	PromptCacheProviderDefault PromptCacheMode = iota
+	// PromptCacheManual applies the configured Anthropic cache breakpoints.
+	PromptCacheManual
+	// PromptCacheGatewayAutomatic lets Vercel AI Gateway place breakpoints.
+	PromptCacheGatewayAutomatic
+)
+
+// CacheBreakpoint configures one Anthropic cache control breakpoint.
+type CacheBreakpoint struct {
+	TTL anthropic.CacheControlEphemeralTTL
+}
+
+// PromptCachingConfig configures prompt caching for one model route.
+type PromptCachingConfig struct {
+	Mode                PromptCacheMode
+	Auto                *CacheBreakpoint
+	SystemInstruction   *CacheBreakpoint
+	Tools               *CacheBreakpoint
+	ConversationHistory *CacheBreakpoint
+}
+
+func (c PromptCachingConfig) validate() error {
+	if c.Mode > PromptCacheGatewayAutomatic {
+		return fmt.Errorf("unsupported prompt cache mode %d", c.Mode)
+	}
+	breakpoints := c.Auto != nil || c.SystemInstruction != nil || c.Tools != nil || c.ConversationHistory != nil
+	if c.Mode != PromptCacheManual && breakpoints {
+		return fmt.Errorf("prompt cache breakpoints require manual mode")
+	}
+	return nil
+}
 
 // applyCacheBreakpoints sets cache_control breakpoints on the request based
 // on the provided configuration. Each breakpoint is independently optional.

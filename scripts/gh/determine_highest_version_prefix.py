@@ -25,7 +25,7 @@ MAINT_BRANCH_PATTERN = re.compile(r"^v(\d+)$")
 # tags for. Update this by hand at the next major migration, when today's
 # `main` becomes a `vN` maintenance branch and a new default branch takes
 # over as the leading line.
-DEFAULT_BRANCH_MAJOR = 2
+DEFAULT_BRANCH_MAJOR = 3
 
 
 def git_tags() -> Iterable[str]:

@@ -1,5 +1,26 @@
 # Changelog
 
+## [v3.0.0] - Make model routes explicit
+
+### Breaking changes
+
+- Change the module import path from `/v2` to `/v3`.
+- Replace `NewModel(ctx, model, config)` and `NewModelWithOptions` with a caller-owned Anthropic SDK client and `NewModel(Config, ...Option)`.
+- Remove adapter-owned credential discovery, endpoint selection, backend variants, and their configuration fields.
+- Replace model-name reasoning inference with explicit disabled, adaptive-effort, and provider-native strategies. GenAI thinking levels remain request-overridable, but `ThinkingBudget` is rejected and the v2 manual token-budget fallback for older Claude models is removed.
+- Replace the v2 prompt-caching configuration with explicit provider-default, gateway-automatic, and manual cache modes.
+- Remove the v2 gateway-effort option and exported reasoning converter compatibility APIs.
+
+### Added
+
+- Add first-class Vercel AI Gateway support behind ADK's `model.LLM` interface through Vercel's Anthropic-compatible Messages endpoint. ADK agents can use Claude and supported non-Claude gateway models with typed OpenAI, Google, and Z.AI reasoning projectors, provider routing, fail-closed zero-data-retention policy, and allowlisted resolved-provider and request-cost metadata on streaming and non-streaming responses.
+- Separate canonical model identity from the request model sent to compatible endpoints.
+- Expose typed response metadata for the Anthropic message ID and aggregate, five-minute, and one-hour cache-creation token counts.
+
+### Migration
+
+See [Migrating from v2](README.md#migrating-from-v2).
+
 ## [v2.0.13] - Preserve gateway reasoning effort
 
 - Add `NewModelWithOptions` and `WithGatewayEffortTranslation` so verified Anthropic-compatible gateways can explicitly map `ThinkingLevel: LOW`, `MEDIUM`, and `HIGH` to `output_config.effort` for non-Claude models without sending Claude's `thinking.type: adaptive` parameter. The existing `NewModel` API remains available and does not assume gateway-specific translation.
