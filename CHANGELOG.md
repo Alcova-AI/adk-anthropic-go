@@ -1,5 +1,9 @@
 # Changelog
 
+## [v3.0.1] - Add root Apache licence
+
+- Add the complete Apache License 2.0 text at the repository root.
+
 ## [v3.0.0] - Make model routes explicit
 
 ### Breaking changes
