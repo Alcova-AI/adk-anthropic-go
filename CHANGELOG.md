@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Translate minimal reasoning to `none` for GPT-5.6 Luna aliases and dated snapshots, preventing unsupported-effort errors while preserving other models' reasoning settings.
+
 ## [v3.0.1] - Add root Apache licence
 
 - Add the complete Apache License 2.0 text at the repository root.

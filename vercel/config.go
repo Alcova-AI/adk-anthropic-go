@@ -54,6 +54,8 @@ type Routing struct {
 // ProviderOptionsInput contains the resolved request values used to build
 // model-family and gateway provider options.
 type ProviderOptionsInput struct {
+	// RequestModel is the model identifier sent to the provider.
+	RequestModel            string
 	ThinkingLevel           genai.ThinkingLevel
 	IncludeThoughts         bool
 	MaxOutputTokens         int64

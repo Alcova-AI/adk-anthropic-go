@@ -18,6 +18,8 @@ import (
 	"fmt"
 
 	"google.golang.org/genai"
+
+	"github.com/Alcova-AI/adk-anthropic-go/v3/internal/reasoning"
 )
 
 // OpenAIModelOptions projects genai reasoning levels to OpenAI model options.
@@ -28,6 +30,7 @@ func (OpenAIModelOptions) ProjectProviderOptions(input ProviderOptionsInput) (ma
 	if err != nil {
 		return nil, err
 	}
+	effort = reasoning.OpenAIEffort(input.RequestModel, effort)
 	options := map[string]any{"store": false}
 	if effort != "" {
 		options["reasoningEffort"] = effort

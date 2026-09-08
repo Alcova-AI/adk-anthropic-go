@@ -537,6 +537,7 @@ func (m *anthropicModel) requestOptions(req *model.LLMRequest, maxOutputTokens i
 		return nil, err
 	}
 	providerOptions, err := m.vercel.WireProviderOptions(vercel.ProviderOptionsInput{
+		RequestModel:            string(m.wireModel()),
 		ThinkingLevel:           resolved.ThinkingLevel,
 		IncludeThoughts:         resolved.IncludeThoughts,
 		MaxOutputTokens:         maxOutputTokens,

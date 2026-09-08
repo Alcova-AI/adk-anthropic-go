@@ -531,3 +531,56 @@ func testRequest(thinking *genai.ThinkingConfig) *model.LLMRequest {
 		Config:   &genai.GenerateContentConfig{ThinkingConfig: thinking},
 	}
 }
+
+func TestMinimalReasoningReachesWire(t *testing.T) {
+	for _, tc := range []struct{ model, want string }{
+		{"gpt-5.6-luna", "none"},
+		{"openai/gpt-5.6-luna", "none"},
+		{"openai/gpt-5.6-luna-2026-07-09", "none"},
+		{"openai/gpt-5", "minimal"},
+		{"openai/gpt-5-2025-08-07", "minimal"},
+		{"openai/gpt-5.6-luna-other", "minimal"},
+		{"google/gemini-3.7-flash", "minimal"},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			bodies := make(chan map[string]any, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					http.Error(w, err.Error(), 400)
+					return
+				}
+				bodies <- body
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+			}))
+			defer srv.Close()
+			client := anthropic.NewClient(option.WithAPIKey("test"), option.WithBaseURL(srv.URL))
+			llm, err := NewModel(Config{Client: client, CanonicalModel: "test-identity", RequestModel: anthropic.Model(tc.model)}, WithReasoning(ReasoningConfig{Strategy: ReasoningProviderNative, DefaultLevel: genai.ThinkingLevelHigh}), WithVercelGateway(vercel.Config{Projector: vercel.OpenAIModelOptions{}}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := &model.LLMRequest{Contents: []*genai.Content{genai.NewContentFromText("ping", genai.RoleUser)}, Config: &genai.GenerateContentConfig{ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMinimal}}}
+			for _, err := range llm.GenerateContent(t.Context(), req, false) {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			select {
+			case body := <-bodies:
+				opts := body["providerOptions"].(map[string]any)["openai"].(map[string]any)
+				if opts["reasoningEffort"] != tc.want {
+					t.Errorf("effort = %v, want %s", opts["reasoningEffort"], tc.want)
+				}
+				if _, ok := body["thinking"]; ok {
+					t.Fatal("sent Claude thinking to OpenAI")
+				}
+			default:
+				t.Fatal("request did not reach server")
+			}
+			if req.Config.ThinkingConfig.ThinkingLevel != genai.ThinkingLevelMinimal {
+				t.Fatal("caller request mutated")
+			}
+		})
+	}
+}
