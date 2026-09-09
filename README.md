@@ -1,8 +1,8 @@
 # ADK Anthropic Go
 
-> **Deprecated:** This standalone adapter is superseded by [adk-models-go](https://github.com/Alcova-AI/adk-models-go), using its [`anthropic` package](https://github.com/Alcova-AI/adk-models-go/tree/ae6b215dc576d0c43724c0fda74bde3b4313201c/anthropic).
+> **Deprecated:** This standalone adapter is superseded by [adk-models-go](https://github.com/Alcova-AI/adk-models-go), using its [`anthropic` package](https://github.com/Alcova-AI/adk-models-go/tree/main/anthropic).
 >
-> The replacement is currently in [draft PR #1](https://github.com/Alcova-AI/adk-models-go/pull/1); no replacement release is published yet. Existing releases remain available. See the [new README for migration guidance](https://github.com/Alcova-AI/adk-models-go/blob/ae6b215dc576d0c43724c0fda74bde3b4313201c/README.md#migrating-from-the-separate-adapters) before changing dependencies.
+> The combined adapter is available in [v0.1.0](https://github.com/Alcova-AI/adk-models-go/releases/tag/v0.1.0). Existing releases remain available. See the [new README for migration guidance](https://github.com/Alcova-AI/adk-models-go/blob/main/README.md#migrating-from-the-separate-adapters) before changing dependencies.
 
 Anthropic Messages API support for Google's [Agent Development Kit](https://github.com/google/adk-go).
 
