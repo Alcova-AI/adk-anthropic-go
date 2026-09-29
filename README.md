@@ -1,10 +1,34 @@
 # ADK Anthropic Go
 
-> **Deprecated:** This standalone adapter is superseded by [adk-models-go](https://github.com/Alcova-AI/adk-models-go), using its [`anthropic` package](https://github.com/Alcova-AI/adk-models-go/tree/main/anthropic).
->
-> The combined adapter is available in [v0.1.0](https://github.com/Alcova-AI/adk-models-go/releases/tag/v0.1.0). Existing releases remain available. See the [new README for migration guidance](https://github.com/Alcova-AI/adk-models-go/blob/main/README.md#migrating-from-the-separate-adapters) before changing dependencies.
+> [!WARNING]
+> **This repository is deprecated.** Development has moved to [**Alcova-AI/adk-models-go**](https://github.com/Alcova-AI/adk-models-go). New features and fixes land there only.
 
 Anthropic Messages API support for Google's [Agent Development Kit](https://github.com/google/adk-go).
+
+## Move to adk-models-go
+
+[adk-models-go](https://github.com/Alcova-AI/adk-models-go) combines this adapter with the OpenAI and Vercel AI Gateway adapters in one Go module. Its [`anthropic` package](https://github.com/Alcova-AI/adk-models-go/tree/main/anthropic) replaces this module.
+
+```bash
+go get github.com/Alcova-AI/adk-models-go
+```
+
+```go
+// Before
+import adkanthropic "github.com/Alcova-AI/adk-anthropic-go/v3"
+
+// After
+import (
+	adkmodels "github.com/Alcova-AI/adk-models-go"
+	adkanthropic "github.com/Alcova-AI/adk-models-go/anthropic"
+)
+```
+
+The move needs configuration changes, not only a new import path. Read the [migration guide](https://github.com/Alcova-AI/adk-models-go#migrating-from-the-separate-adapters) before you change dependencies.
+
+Existing releases of this module stay available. The rest of this README documents v3 for current users.
+
+---
 
 ## Installation
 
